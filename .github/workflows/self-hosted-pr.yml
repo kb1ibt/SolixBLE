@@ -1,0 +1,88 @@
+# Mirrors upstream's three PR-relevant checks against one of our branches, on a
+# self-hosted runner.
+#
+# Upstream needs a maintainer to approve workflows on fork PRs -- a sensible
+# guard against outside contributions burning their Actions minutes -- so our
+# branches otherwise sit unverified until someone presses the button.
+#
+# This file lives ONLY on the ci/self-hosted branch. PR branches must never
+# carry it: for pull_request events GitHub uses the base repository's workflow
+# definition, so a copy on a PR branch would change nothing upstream while
+# adding a .github/workflows diff the maintainer has to read past.
+#
+# Upstream's fourth workflow (publish to PyPI) is deliberately not mirrored.
+#
+# Usage:
+#   gh workflow run self-hosted-pr.yml --repo kb1ibt/SolixBLE \
+#     --ref ci/self-hosted -f ref=pr/reassembly
+
+name: Self-hosted PR check
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or SHA to test
+        required: true
+        default: pr/reassembly
+
+env:
+  # Upstream pins this in both the Pytest and Type check matrices.
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  # Mirrors .github/workflows/pytest.yml. This is the gate that means something:
+  # upstream main is green here, so a failure is ours.
+  test:
+    name: Pytest
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_dev.txt
+      - name: Install library
+        run: python -m pip install .
+      - name: Test with coverage
+        run: pytest --cov
+      - name: Test
+        run: pytest
+
+  # Mirrors .github/workflows/mypy.yml. Already failing on upstream main, so
+  # read it as a delta against that rather than as pass/fail.
+  type-check:
+    name: Type check
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_dev.txt
+      - name: Install library
+        run: python -m pip install .
+      - name: Run mypy
+        run: mypy SolixBLE tests --strict --namespace-packages --explicit-package-bases
+
+  # Mirrors .github/workflows/ruff.yml, which runs the action with no arguments
+  # (so: ruff check, from the repository root). Also already failing on upstream
+  # main.
+  ruff:
+    name: Ruff
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: astral-sh/ruff-action@v3
