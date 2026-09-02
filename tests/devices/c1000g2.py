@@ -17,6 +17,17 @@ from tests.const import NEGOTIATION_RESPONSES_SOLIX
 # raised where appropriate. See test_send_command() in test_commands.py.
 
 C1000G2_TEST_COMMANDS = [
+    # The Gen 2 streams nothing until it receives this subscribe command, so a
+    # broken _post_connect costs the device all of its telemetry with no other
+    # symptom. It had no coverage, and went unnoticed when _send_command moved
+    # from a payload to a parameters interface.
+    pytest.param(
+        C1000G2,
+        "_post_connect",
+        [],
+        [("4100", "a10121")],
+        id="c1000g2_post_connect_subscribe",
+    ),
     pytest.param(
         C1000G2,
         "turn_ac_on",

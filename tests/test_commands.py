@@ -31,6 +31,7 @@ from tests.devices.c1000 import (
     C1000_TEST_COMMANDS_RESPONSES,
 )
 from tests.devices.c1000g2 import C1000G2_TEST_COMMANDS, C1000G2_TEST_COMMANDS_E2E
+from tests.devices.c2000g2 import C2000G2_TEST_COMMANDS
 from tests.devices.f2600 import (
     F2600_TEST_COMMANDS,
     F2600_TEST_COMMANDS_E2E,
@@ -57,6 +58,7 @@ from tests.helpers import MockDevice
         *C800_TEST_COMMANDS,
         *C1000_TEST_COMMANDS,
         *C1000G2_TEST_COMMANDS,
+        *C2000G2_TEST_COMMANDS,
         *F2600_TEST_COMMANDS,
         *F3800_TEST_COMMANDS,
         *PRIME_CHARGER_160W_TEST_COMMANDS,

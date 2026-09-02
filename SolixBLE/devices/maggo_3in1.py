@@ -12,7 +12,11 @@ from ..states import PortStatus
 #: C1000G2, this charger streams nothing until it receives this subscribe
 #: command.
 CMD_SUBSCRIBE = "4200"
-SUBSCRIBE_PAYLOAD = "a10121"
+SUBSCRIBE_PARAMETERS = {
+    "a1": {
+        "value": "21",
+    },
+}
 
 
 class MagGo3in1(PrimeDevice):
@@ -52,8 +56,8 @@ class MagGo3in1(PrimeDevice):
         send it after every (re)connection.
         """
         await self._send_command(
-            cmd=bytes.fromhex(CMD_SUBSCRIBE),
-            payload=bytes.fromhex(SUBSCRIBE_PAYLOAD),
+            cmd=CMD_SUBSCRIBE,
+            parameters=SUBSCRIBE_PARAMETERS,
         )
 
     @property
