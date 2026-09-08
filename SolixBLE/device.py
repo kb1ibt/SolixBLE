@@ -77,6 +77,16 @@ NEGOTIATION_MTU_PROPOSAL = "00f0"
 NEGOTIATION_ENCRYPT_METHOD = "40"
 
 
+def _schema_version(schema: str) -> int | None:
+    """Extract the trailing ``_NNNN`` revision number from a schema name.
+
+    :param schema: A schema name such as ``charging_pps_series_c_0005``.
+    :returns: The revision number, or None if the tail is not numeric.
+    """
+    tail = schema.rsplit("_", 1)[-1]
+    return int(tail) if tail.isdigit() else None
+
+
 class SolixBLEDevice:
     """Solix BLE device object."""
 
@@ -90,6 +100,13 @@ class SolixBLEDevice:
     #: TLV the other telemetry frames use. Subclasses set this (e.g the C2000
     #: G2's ``c490``).
     _PROTOBUF_TELEMETRY_COMMANDS: tuple[str, ...] = ()
+
+    #: The protobuf-summary schema this class's field decoding was validated
+    #: against (the frame's ``a3`` schema name, e.g
+    #: ``charging_pps_series_c_0005``). The schema versions the protobuf layout,
+    #: so a device posting a different revision is walked on a best-effort basis
+    #: and warned about. None disables the check.
+    _VALIDATED_SUMMARY_SCHEMA: str | None = None
 
     #: The maximum packet size an Anker device is able to send
     _mtu = 253
@@ -145,6 +162,7 @@ class SolixBLEDevice:
         self._client_token: str = client_token or str(uuid.uuid4())
         self._auth_mode: bytes | None = None
         self._summary: dict[str, object] = {}
+        self._summary_schema: str | None = None
 
     @property
     def _encrypted_negotiation(self) -> bool:
@@ -454,6 +472,18 @@ class SolixBLEDevice:
         """
         return self._summary
 
+    @property
+    def summary_schema(self) -> str | None:
+        """The ``a3`` schema name of the latest protobuf device-summary frame.
+
+        The schema (e.g ``charging_pps_series_c_0005``) versions the protobuf
+        layout, so it identifies which revision :attr:`summary` was decoded
+        against. None until such a frame is received.
+
+        :returns: The schema name, or None.
+        """
+        return self._summary_schema
+
     def _parse_int(
         self, key: str, begin: int = None, end: int = None, signed: bool = False
     ) -> int:
@@ -512,6 +542,65 @@ class SolixBLEDevice:
         a2_length = int.from_bytes(payload[a2_start + 1 : a2_start + 3], "little")
         blob_start = a2_start + 4
         return payload[blob_start : blob_start + a2_length - 1]
+
+    @staticmethod
+    def _protobuf_schema(payload: bytes) -> str | None:
+        """Return the c490 frame's trailing ``a3`` schema name, if present.
+
+        The schema (e.g ``charging_pps_series_c_0005``) follows the ``a2``
+        protobuf blob and names the revision the protobuf was posted against.
+
+        :param payload: The decrypted device-post frame.
+        :returns: The schema string, or None if it is absent or not ASCII.
+        """
+        if len(payload) <= 6:
+            return None
+        a2_start = 2 + payload[1]
+        a2_length = int.from_bytes(payload[a2_start + 1 : a2_start + 3], "little")
+        a3_start = a2_start + a2_length + 3
+        if a3_start + 2 > len(payload) or payload[a3_start] != 0xA3:
+            return None
+        a3_length = payload[a3_start + 1]
+        try:
+            return payload[a3_start + 2 : a3_start + 2 + a3_length].decode("ascii")
+        except UnicodeDecodeError:
+            return None
+
+    def _check_summary_schema(self) -> None:
+        """Warn if the c490 schema differs from the validated revision.
+
+        The field decoding is only correct for
+        :attr:`_VALIDATED_SUMMARY_SCHEMA`; an older revision (e.g ``_0002``) or
+        one newer than validated is walked anyway but its values may be wrong,
+        so it is logged.
+        """
+        validated = self._VALIDATED_SUMMARY_SCHEMA
+        schema = self._summary_schema
+        if validated is None or schema is None or schema == validated:
+            return
+        got = _schema_version(schema)
+        want = _schema_version(validated)
+        if got is None or want is None:
+            _LOGGER.warning(
+                "Device-summary schema %r is not the validated %r; "
+                "values may be wrong.",
+                schema,
+                validated,
+            )
+        elif got < want:
+            _LOGGER.warning(
+                "Device-summary schema %r predates the validated %r (older "
+                "firmware); values may be wrong.",
+                schema,
+                validated,
+            )
+        else:
+            _LOGGER.warning(
+                "Device-summary schema %r is newer than the validated %r; "
+                "values are unverified.",
+                schema,
+                validated,
+            )
 
     def _gcm_key_nonce(self) -> tuple[bytes, bytes]:
         """Return the GCM (key, nonce): the ECDH secret if derived, else static.
@@ -735,8 +824,13 @@ class SolixBLEDevice:
                             self._summary = walk_protobuf(
                                 self._protobuf_body(decrypted_payload)
                             )
+                            self._summary_schema = self._protobuf_schema(
+                                decrypted_payload
+                            )
+                            self._check_summary_schema()
                             _LOGGER.debug(
-                                f"Protobuf summary ({len(self._summary)} fields)"
+                                f"Protobuf summary ({len(self._summary)} fields, "
+                                f"schema {self._summary_schema})"
                             )
                             return None
 
@@ -1478,6 +1572,7 @@ class SolixBLEDevice:
         self._authorized = False
         self._auth_mode = None
         self._summary = {}
+        self._summary_schema = None
         self._last_packet_timestamp = None
         self._negotiation_timestamp = None
         self._packet_futures: dict[bytes, list[asyncio.Future]] = {}

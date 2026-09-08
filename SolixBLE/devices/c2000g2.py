@@ -132,7 +132,21 @@ class C2000G2(C1000G2):
     (display switch, brightness, timeout, and the SoC limits), the ``a3``/``a6``
     status and time-remaining fields, the ``f9`` version block including its
     per-submodule slots, and the ``c0`` expansion-battery block for the BP2000.
+
+    It also receives the ``c490`` protobuf device-summary post (armed by
+    :meth:`enable_realtime_telemetry`), decoded into the :attr:`summary` map.
     """
+
+    #: The Gen 2 telemetry set plus the ``c490`` protobuf device-summary post.
+    _TELEMETRY_COMMANDS: tuple[str, ...] = ("c421", "c900", "c490")
+
+    #: ``c490`` is a protobuf blob, walked into :attr:`summary` rather than the
+    #: flat TLV the other telemetry frames use.
+    _PROTOBUF_TELEMETRY_COMMANDS: tuple[str, ...] = ("c490",)
+
+    #: The c490 field decoding here is validated against this schema revision;
+    #: an older revision (the 2025 ``_0002``) or a newer one is warned about.
+    _VALIDATED_SUMMARY_SCHEMA: str = "charging_pps_series_c_0005"
 
     async def _keep_alive(self) -> int | None:
         """Poll for fresh telemetry.
@@ -218,7 +232,8 @@ class C2000G2(C1000G2):
             raise ValueError(f"Brightness must be one of {BRIGHTNESS_VALUES}")
 
         await self._send_command(
-            cmd=CMD_SYSTEM, parameters=_parameters("a3", brightness),
+            cmd=CMD_SYSTEM,
+            parameters=_parameters("a3", brightness),
         )
 
     async def set_display_timeout(self, seconds: int) -> None:
@@ -231,7 +246,8 @@ class C2000G2(C1000G2):
             raise ValueError(f"Timeout must be one of {DISPLAY_TIMEOUT_VALUES}")
 
         await self._send_command(
-            cmd=CMD_SYSTEM, parameters=_parameters("a4", seconds, type_=2),
+            cmd=CMD_SYSTEM,
+            parameters=_parameters("a4", seconds, type_=2),
         )
 
     async def set_max_battery_percentage(self, percentage: int) -> None:
@@ -247,7 +263,8 @@ class C2000G2(C1000G2):
             raise ValueError(f"Percentage must be 0-{MAX_PERCENTAGE}")
 
         await self._send_command(
-            cmd=CMD_SYSTEM, parameters=_parameters("aa", percentage),
+            cmd=CMD_SYSTEM,
+            parameters=_parameters("aa", percentage),
         )
 
     async def set_min_battery_percentage(self, percentage: int) -> None:
@@ -263,7 +280,8 @@ class C2000G2(C1000G2):
             raise ValueError(f"Percentage must be 0-{MAX_PERCENTAGE}")
 
         await self._send_command(
-            cmd=CMD_SYSTEM, parameters=_parameters("ab", percentage),
+            cmd=CMD_SYSTEM,
+            parameters=_parameters("ab", percentage),
         )
 
     async def set_ac_output_timeout(self, seconds: int) -> None:
@@ -277,7 +295,8 @@ class C2000G2(C1000G2):
         """
         _validate_timeout(seconds)
         await self._send_command(
-            cmd=CMD_AC_OUTPUT, parameters=_parameters("a3", seconds, type_=3),
+            cmd=CMD_AC_OUTPUT,
+            parameters=_parameters("a3", seconds, type_=3),
         )
 
     async def set_dc_output_timeout(self, seconds: int) -> None:
@@ -291,7 +310,8 @@ class C2000G2(C1000G2):
         """
         _validate_timeout(seconds)
         await self._send_command(
-            cmd=CMD_DC_OUTPUT, parameters=_parameters("a3", seconds, type_=3),
+            cmd=CMD_DC_OUTPUT,
+            parameters=_parameters("a3", seconds, type_=3),
         )
 
     ##############
