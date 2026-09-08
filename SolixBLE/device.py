@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.padding import PKCS7
 
 from SolixBLE.advertisement import CAPABILITY_ENCRYPTED_ECDH
 from SolixBLE.constructs import FragmentedPayload, Packet, ParameterDict, Parameters
+from SolixBLE.parsing import walk_protobuf
 from SolixBLE.utilities import _offset_seconds_west, _to_bytes, get_posix_tz
 
 from .const import (
@@ -84,6 +85,12 @@ class SolixBLEDevice:
     #: (e.g the C1000 Gen 2 uses ``c421``/``c900`` instead of ``c402``/``c405``).
     _TELEMETRY_COMMANDS: tuple[str, ...] = ("c402", "4300", "c405")
 
+    #: Telemetry command codes whose payload is a protobuf device-summary blob
+    #: (walked via :func:`SolixBLE.parsing.walk_protobuf`) rather than the flat
+    #: TLV the other telemetry frames use. Subclasses set this (e.g the C2000
+    #: G2's ``c490``).
+    _PROTOBUF_TELEMETRY_COMMANDS: tuple[str, ...] = ()
+
     #: The maximum packet size an Anker device is able to send
     _mtu = 253
 
@@ -137,6 +144,7 @@ class SolixBLEDevice:
         self._authorized: bool = False
         self._client_token: str = client_token or str(uuid.uuid4())
         self._auth_mode: bytes | None = None
+        self._summary: dict[str, object] = {}
 
     @property
     def _encrypted_negotiation(self) -> bool:
@@ -434,6 +442,18 @@ class SolixBLEDevice:
         """
         return self._last_data_timestamp
 
+    @property
+    def summary(self) -> dict[str, object]:
+        """Fields from the latest protobuf device-summary frame, if any.
+
+        Populated from a ``_PROTOBUF_TELEMETRY_COMMANDS`` frame (e.g. the C2000
+        G2's ``c490``) by :func:`SolixBLE.parsing.walk_protobuf`, keyed by
+        protobuf ``.path``. Empty until such a frame is received.
+
+        :returns: Mapping of ``.path`` to value.
+        """
+        return self._summary
+
     def _parse_int(
         self, key: str, begin: int = None, end: int = None, signed: bool = False
     ) -> int:
@@ -466,6 +486,32 @@ class SolixBLEDevice:
             if self._data
             else DEFAULT_METADATA_STRING
         )
+
+    @staticmethod
+    def _protobuf_body(payload: bytes) -> bytes:
+        """Return the protobuf blob carried in a device-post's outer ``a2`` field.
+
+        A protobuf device post (e.g. the C2000 G2's ``c490``) is a multi-field
+        outer TLV: ``a1`` -- a one-byte command echo -- then ``a2``, whose value
+        *is* the protobuf blob, then a trailing ``a3`` string. ``a2`` is a
+        ``bin`` field with a 2-byte little-endian length and an ``04`` type byte,
+        so the header is ``a1 <len8> <val> a2 <len16> 04``. The slice is bounded
+        to ``a2``'s declared length so the walk sees exactly the protobuf and
+        nothing else.
+
+        :param payload: The decrypted device-post frame.
+        :returns: The protobuf blob (``a2``'s value), or the whole payload if it
+            is too short to carry the wrapper.
+        """
+        if len(payload) <= 6:
+            return payload
+        # Skip the a1 TLV (tag + 1-byte length + value) to reach the a2 field.
+        a2_start = 2 + payload[1]
+        # a2's 2-byte length counts its 04 type byte + the protobuf value, so the
+        # blob is that length minus the type byte, after tag+len+type.
+        a2_length = int.from_bytes(payload[a2_start + 1 : a2_start + 3], "little")
+        blob_start = a2_start + 4
+        return payload[blob_start : blob_start + a2_length - 1]
 
     def _gcm_key_nonce(self) -> tuple[bytes, bytes]:
         """Return the GCM (key, nonce): the ECDH secret if derived, else static.
@@ -682,6 +728,18 @@ class SolixBLEDevice:
                         _LOGGER.debug("Received encrypted telemetry message!")
                         decrypted_payload = self._decrypt_payload(payload)
                         _LOGGER.debug(f"Plain-text payload: {decrypted_payload.hex()}")
+
+                        # Protobuf device-summary frames (e.g the c490) are not
+                        # the flat TLV the other telemetry frames use.
+                        if cmd.hex() in self._PROTOBUF_TELEMETRY_COMMANDS:
+                            self._summary = walk_protobuf(
+                                self._protobuf_body(decrypted_payload)
+                            )
+                            _LOGGER.debug(
+                                f"Protobuf summary ({len(self._summary)} fields)"
+                            )
+                            return None
+
                         parameters = Parameters.parse(decrypted_payload)
                         return await self._process_telemetry(parameters)
 
@@ -1419,6 +1477,7 @@ class SolixBLEDevice:
         self._shared_secret = None
         self._authorized = False
         self._auth_mode = None
+        self._summary = {}
         self._last_packet_timestamp = None
         self._negotiation_timestamp = None
         self._packet_futures: dict[bytes, list[asyncio.Future]] = {}
