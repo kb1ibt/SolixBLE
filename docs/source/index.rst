@@ -29,6 +29,11 @@ No pairing is required in order to receive telemetry data or control the device.
 
    This project is under active development.
 
+The support tables below use these marks: ✅ supported · 🚧 known but not yet
+implemented · ❌ not supported · N/A not applicable · ❔ not investigated. A
+``read/control`` pair such as ✅/🚧 gives the two states separately (e.g. the max
+charge limit is readable but not yet settable).
+
 
 Power station support
 ---------------------
@@ -54,6 +59,10 @@ DC Power out            ✅      ✅         ❌      ✅       ✅       ✅   
 DC Power in status      ✅      ✅         ❌      ❌       ✅       ✅       ❌          ✅    ❌
 DC Power out status     ✅      ❌         ❌      ✅       ✅       ✅       ❌          ✅    ✅
 DC Timer                ✅      ✅         ❌      ❌       ❌       ✅       ❌          ✅    ❌
+Max charge power        ❔      ❔         ❔      ❔       ✅/🚧    ✅/🚧    ❔          ❔    ❔
+Pack voltage            ❔      ❔         ❔      ❔       🚧       🚧       ❔          ❔    ❔
+Cumulative energy out   ❔      ❔         ❔      ❔       🚧       🚧       ❔          ❔    ❔
+Charge presence         ❔      ❔         ❔      ❔       🚧       🚧       ❔          ❔    ❔
 USB Power out           ✅      ✅         ✅      ✅       ✅       ✅       ✅          ✅    ✅
 USB Port status         ✅      ✅         ❌      ❌       ✅       ✅       ❌          ✅    ✅
 Light control           ✅      ✅         ✅      ✅       ❌       ❌       ❌          ✅    ❌
@@ -73,6 +82,12 @@ Expansion firmware      N/A     N/A        N/A     ✅       N/A      ✅       
 Expansion num           N/A     N/A        N/A     ✅       N/A      ✅       ✅          ✅    ❌
 Polled status updates   ✅      ❌         ✅      ✅       ❌       ✅       ❌          ✅    ❌
 ======================= ======= ========== ======= ======== ======== ======== =========== ===== =====
+
+The C2000 G2 (A1783) ``Pack voltage``, ``Cumulative energy out`` and ``Charge
+presence`` rows come from the ~9-minute, cloud-armed ``c490`` device-summary
+rather than the live per-second stream, so the library keeps them in the raw
+summary map without yet decoding them into named properties. Every other C2000 G2
+row is decoded from the live stream.
 
 
 Solar system support
