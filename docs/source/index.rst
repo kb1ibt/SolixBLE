@@ -186,6 +186,7 @@ Contents
    Home <self>
    examples
    usage
+   encrypted_negotiation
    api
    limitations
    new_devices
