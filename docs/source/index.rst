@@ -146,22 +146,27 @@ Expansion battery serial number     ❌           ❌
 Prime charger support
 ---------------------
 
-======================= ============= ============= ===================
-Parameter               250w (A2345)  160w (A2687)  MagGo 3in1 (A25X7)
-======================= ============= ============= ===================
-Display status           ❌            ❌            ❌
-Total power out          ❌            ❌            ✅
-Port on/off control      ✅            ✅            ❌
-Port protocol control    ❌            ❌            ❌
-Timer control            ✅            ✅            ❌
-Individual port status   ✅            ✅            ✅
-Individual port voltage  ✅            ✅            ❌
-Individual port current  ✅            ✅            ❌
-Individual port power    ✅            ✅            ✅
-Temperature              ❌            ❌            ❌
-Firmware version         ❌            ❌            ❌
-Serial number            ❌            ❌            ❌
-======================= ============= ============= ===================
+======================= ============= ============= ============= ===================
+Parameter               250w (A2345)  240w (A91B2)  160w (A2687)  MagGo 3in1 (A25X7)
+======================= ============= ============= ============= ===================
+Display status          ❌            ❌            ❌            ❌
+Total power out         ❌            ✅            ❌            ✅
+Port on/off control     ✅            ❌            ✅            ❌
+Port protocol control   ❌            ❌            ❌            ❌
+Timer control           ✅            ❌            ✅            ❌
+Individual port status  ✅            ✅            ✅            ✅
+Individual port voltage ✅            ✅            ✅            ❌
+Individual port current ✅            ✅            ✅            ❌
+Individual port power   ✅            ✅            ✅            ✅
+AC outlet state         N/A           ✅            N/A           N/A
+Temperature             ❌            ❌            ❌            ❌
+Firmware version        ❌            ❌            ❌            ❌
+Serial number           ❌            ✅            ❌            ❌
+======================= ============= ============= ============= ===================
+
+The 240w (A91B2) is an 8-in-1 charging station: it decodes the same per-USB-port
+telemetry as the 250w charger plus its two AC-outlet switch states
+(``ac_1_switch`` / ``ac_2_switch``). Port and outlet control is not yet exposed.
 
 
 Prime power bank support
