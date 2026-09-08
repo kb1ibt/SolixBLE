@@ -9,6 +9,7 @@ import copy
 import inspect
 import logging
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
@@ -26,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
 )
 from cryptography.hazmat.primitives.padding import PKCS7
 
+from SolixBLE.advertisement import CAPABILITY_ENCRYPTED_ECDH
 from SolixBLE.constructs import FragmentedPayload, Packet, ParameterDict, Parameters
 from SolixBLE.utilities import _to_bytes, get_posix_tz
 
@@ -49,6 +51,21 @@ _LOGGER = logging.getLogger(__name__)
 #: The UUID sent to the device during negotiation
 UUID_STRING = "b2dc0b17-b75d-4abf-ba6e-ec7c997c23e7"
 
+#: Static AES-GCM key, nonce and AAD for the encrypted negotiation, used before
+#: the ECDH secret exists. The device derives the key and nonce from two DROM
+#: constants at connect time (A1783 module firmware, confirmed 2026-09-08); the
+#: results are fixed, so the values are inlined here.
+NEGOTIATION_KEY = "b8ff7422955d4eb6d554a2c470280559"
+NEGOTIATION_NONCE = "6ba3e3f2f3a60f2971ce5d1f"
+NEGOTIATION_AAD = "3322110077665544bbaa9988ffeeddcc"
+
+#: The client's ECDH public key (uncompressed P-256 point without the ``04``
+#: prefix) matching ``const.PRIVATE_KEY``, sent in the ``4021`` exchange.
+CLIENT_PUBLIC_KEY = (
+    "060ea168f232aedb37fb2d120c49180329ac72ab5ec3eb8fd30a2f252dc5e151"
+    "dabccd9b1dc1e288704ca760a0d8c918e5c94823a1f609a4bf07fb4c33ee2190"
+)
+
 
 class SolixBLEDevice:
     """Solix BLE device object."""
@@ -61,8 +78,32 @@ class SolixBLEDevice:
     #: The maximum packet size an Anker device is able to send
     _mtu = 253
 
-    def __init__(self, ble_device: BLEDevice) -> None:
-        """Initialise device object. Does not connect automatically."""
+    #: Whether to negotiate on the encrypted path when the advertised
+    #: capability is unknown. A known capability byte overrides this; it is the
+    #: fallback for a device constructed without one.
+    _DEFAULT_ENCRYPTED_NEGOTIATION: bool = False
+
+    def __init__(
+        self,
+        ble_device: BLEDevice,
+        capability: int | None = None,
+        client_token: str | None = None,
+    ) -> None:
+        """Initialise device object. Does not connect automatically.
+
+        :param ble_device: The bleak device to wrap.
+        :param capability: The device's advertised capability byte, if known.
+            It selects the negotiation path (encrypted when the ECDH bit is
+            set). ``BLEDevice`` is slotted and cannot carry it, so the caller
+            reads it from the advertisement (see
+            :func:`SolixBLE.advertisement.capability_from_advertisement`) and
+            passes it here; None falls back to the class default.
+        :param client_token: Stable per-client identifier registered with the
+            device on the encrypted path. On hardened firmware the first use of
+            a new token needs a physical button press; the device then accepts
+            it on every later connection, so the caller should persist it and
+            pass the same value each time. A random one is generated if omitted.
+        """
 
         _LOGGER.debug(
             f"Initializing Solix device '{ble_device.name}' with"
@@ -83,6 +124,23 @@ class SolixBLEDevice:
         self._disconnect_event: asyncio.Event = asyncio.Event()
         self._connection_attempts: int = 0
         self._shared_secret: bytes | None = None
+        self._capability: int | None = capability
+        self._authorized: bool = False
+        self._client_token: str = client_token or str(uuid.uuid4())
+        self._auth_mode: bytes | None = None
+
+    @property
+    def _encrypted_negotiation(self) -> bool:
+        """Whether to negotiate on the encrypted (GCM / ``4xxx``) path.
+
+        Chosen from the advertised capability's ECDH bit when the byte is
+        known, else the class default. The device MCU's ``auth_mode`` is the
+        real policy, but it is only readable once stage 2 arrives, so the
+        pre-connect advert picks the initial cipher.
+        """
+        if self._capability is not None:
+            return bool(self._capability & CAPABILITY_ENCRYPTED_ECDH)
+        return self._DEFAULT_ENCRYPTED_NEGOTIATION
 
     def add_callback(self, function: Callable[[], None]) -> None:
         """Register a callback to be run on state updates.
@@ -103,7 +161,25 @@ class SolixBLEDevice:
         self._state_changed_callbacks.remove(function)
 
     async def _initiate_negotiations(self) -> None:
-        """Send the negotiation initiation command."""
+        """Send the negotiation initiation command.
+
+        The encrypted path opens with ``4001`` under the static GCM key; the
+        cleartext path opens with ``0001`` carrying the client UUID.
+        """
+        if self._encrypted_negotiation:
+            await self._send_packet(
+                pattern=NEGOTIATION_PATTERN,
+                cmd="4001",
+                parameters={
+                    "a1": {
+                        "key": bytes.fromhex("a1"),
+                        "type": None,
+                        "value": lambda self: self._timestamp(),
+                    },
+                },
+            )
+            return
+
         await self._send_packet(pattern=NEGOTIATION_PATTERN, cmd="0001",
             parameters={
                 "a1": {
@@ -311,7 +387,11 @@ class SolixBLEDevice:
 
         :returns: True/False if session has been negotiated and connected.
         """
-        return self.connected and self._shared_secret is not None
+        return (
+            self.connected
+            and self._shared_secret is not None
+            and (not self._encrypted_negotiation or self._authorized)
+        )
 
     @property
     def available(self) -> bool:
@@ -378,8 +458,41 @@ class SolixBLEDevice:
             else DEFAULT_METADATA_STRING
         )
 
+    def _gcm_key_nonce(self) -> tuple[bytes, bytes]:
+        """Return the GCM (key, nonce): the ECDH secret if derived, else static.
+
+        Before the ECDH exchange the encrypted path is keyed on the static
+        negotiation key and nonce; afterwards on the derived shared secret.
+        """
+        if self._shared_secret is not None:
+            return self._shared_secret[:16], self._shared_secret[16:28]
+        return bytes.fromhex(NEGOTIATION_KEY), bytes.fromhex(NEGOTIATION_NONCE)
+
+    def _decrypt_payload_gcm(self, payload: bytes) -> bytes:
+        """AES-GCM decrypt a payload on the encrypted negotiation path.
+
+        The last 16 bytes are the authentication tag.
+        """
+        key, nonce = self._gcm_key_nonce()
+        mac = payload[-16:]
+        body = payload[:-16]
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        cipher.update(bytes.fromhex(NEGOTIATION_AAD))
+        try:
+            return cipher.decrypt_and_verify(body, mac)
+        except ValueError:
+            _LOGGER.exception("GCM tag verify failed; decrypting without verify")
+            cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+            return cipher.decrypt(body)
+
     def _decrypt_payload(self, payload: bytes) -> bytes:
-        """Decrypt payload using negotiated shared secret and IV if available."""
+        """Decrypt payload using negotiated shared secret and IV if available.
+
+        The encrypted path uses AES-GCM (static key before the ECDH secret
+        exists); the cleartext path uses AES-CBC once the secret is derived.
+        """
+        if self._encrypted_negotiation:
+            return self._decrypt_payload_gcm(payload)
 
         if self._shared_secret is None:
             _LOGGER.debug("Skipping decryption as key not negotiated...")
@@ -394,7 +507,17 @@ class SolixBLEDevice:
         return unpadded_data + unpadder.finalize()
 
     def _encrypt_payload(self, payload: bytes) -> bytes:
-        """Encrypt payload using negotiated shared secret if available."""
+        """Encrypt payload using negotiated shared secret if available.
+
+        AES-GCM on the encrypted path (static key before the secret exists),
+        AES-CBC on the cleartext path.
+        """
+        if self._encrypted_negotiation:
+            key, nonce = self._gcm_key_nonce()
+            cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+            cipher.update(bytes.fromhex(NEGOTIATION_AAD))
+            encrypted, mac = cipher.encrypt_and_digest(payload)
+            return encrypted + mac
 
         if self._shared_secret is None:
             _LOGGER.debug("Skipping encryption as key not negotiated...")
@@ -557,6 +680,12 @@ class SolixBLEDevice:
                     else:
                         _LOGGER.debug(f"Received unknown message of type: {cmd.hex()}")
 
+                # The unsolicited authorization grant the device pushes after a
+                # physical button press on the encrypted path.
+                case "030101":
+                    _LOGGER.debug("Received authorization grant message!")
+                    return await self._process_arm_grant(cmd, payload)
+
                 case _:
                     _LOGGER.warning(
                         f"Unexpected packet type '{pattern}' sent by device! Packet: {data.hex()}"
@@ -605,6 +734,13 @@ class SolixBLEDevice:
 
         plain_text_payload = self._decrypt_payload(payload)
         _LOGGER.debug(f"Plain-text payload: {plain_text_payload.hex()}")
+
+        # The encrypted path has its own stages and a status-9 reply that does
+        # not parse as parameters, so branch before the generic parse below.
+        if self._encrypted_negotiation:
+            await self._process_negotiation_encrypted(cmd, plain_text_payload)
+            return
+
         parameters = Parameters.parse(plain_text_payload)
         _LOGGER.debug(f"Parameters: {parameters.to_str(verbose=True, types=False)}")
 
@@ -779,6 +915,235 @@ class SolixBLEDevice:
                 _LOGGER.warning(
                     f"Received unexpected negotiation request response from device! cmd: '{cmd}', parameters: '{parameters}'"
                 )
+
+    async def _process_negotiation_encrypted(
+        self,
+        cmd: bytes,
+        plaintext: bytes,
+    ) -> None:
+        """Drive the encrypted (GCM / ``4xxx``) negotiation and authorization.
+
+        Built to the A1783 comms-module firmware: ``4005`` echoes the device's
+        own auth mode, the ``4022`` confer carries a signed UTC offset, and the
+        link is not authorized until a ``4027`` registration succeeds. That
+        succeeds at once for an already-registered client token; otherwise the
+        device replies status ``9`` and authorizes only after a physical button
+        press, which arrives as an unsolicited grant on pattern ``030101``.
+
+        :param cmd: The negotiation response command code.
+        :param plaintext: The GCM-decrypted response payload.
+        """
+        match cmd.hex():
+            # Stage 1: propose capabilities.
+            case "4801":
+                await self._send_packet(
+                    pattern=NEGOTIATION_PATTERN,
+                    cmd="4003",
+                    parameters={
+                        "a1": {
+                            "key": bytes.fromhex("a1"),
+                            "type": None,
+                            "value": lambda self: self._timestamp(),
+                        },
+                        "a3": {
+                            "key": bytes.fromhex("a3"),
+                            "type": None,
+                            "value": bytes.fromhex("20"),
+                        },
+                        "a4": {
+                            "key": bytes.fromhex("a4"),
+                            "type": None,
+                            "value": bytes.fromhex("00f0"),
+                        },
+                    },
+                )
+
+            # Stage 2: record the device MTU and auth mode, ask for device info.
+            case "4803":
+                parameters = Parameters.parse(plaintext)
+                self._mtu = int.from_bytes(
+                    parameters["a2"].value_legacy,
+                    byteorder="little",
+                )
+                self._auth_mode = parameters["a5"].value_legacy
+                await self._send_packet(
+                    pattern=NEGOTIATION_PATTERN,
+                    cmd="4029",
+                    parameters={
+                        "a1": {
+                            "key": bytes.fromhex("a1"),
+                            "type": None,
+                            "value": lambda self: self._timestamp(),
+                        },
+                    },
+                )
+
+            # Stage 3: set capabilities, echoing the device's declared auth mode.
+            case "4829":
+                await self._send_packet(
+                    pattern=NEGOTIATION_PATTERN,
+                    cmd="4005",
+                    parameters={
+                        "a1": {
+                            "key": bytes.fromhex("a1"),
+                            "type": None,
+                            "value": lambda self: self._timestamp(),
+                        },
+                        "a3": {
+                            "key": bytes.fromhex("a3"),
+                            "type": None,
+                            "value": bytes.fromhex("20"),
+                        },
+                        # The firmware does not read the MTU echo; send the
+                        # declared value for correctness.
+                        "a4": {
+                            "key": bytes.fromhex("a4"),
+                            "type": None,
+                            "value": self._mtu.to_bytes(2, byteorder="little"),
+                        },
+                        # a5 selects the cipher; the 0x44 bits mean ECDH.
+                        "a5": {
+                            "key": bytes.fromhex("a5"),
+                            "type": None,
+                            "value": bytes.fromhex("44"),
+                        },
+                        # a6 must equal the auth mode the device gave in 4803.
+                        "a6": {
+                            "key": bytes.fromhex("a6"),
+                            "type": None,
+                            "value": self._auth_mode or bytes.fromhex("02"),
+                        },
+                    },
+                )
+
+            # Stage 4: send our ECDH public key.
+            case "4805":
+                await self._send_packet(
+                    pattern=NEGOTIATION_PATTERN,
+                    cmd="4021",
+                    parameters={
+                        "a1": {
+                            "key": bytes.fromhex("a1"),
+                            "type": None,
+                            "value": bytes.fromhex(CLIENT_PUBLIC_KEY),
+                        },
+                    },
+                )
+
+            # Stage 5: derive the shared secret, send the timezone confer.
+            case "4821":
+                parameters = Parameters.parse(plaintext)
+                self._negotiation_timestamp = time.time()
+                device_public_key_bytes = (
+                    bytes.fromhex("04") + parameters["a1"].value_legacy
+                )
+                device_public_key = EllipticCurvePublicKey.from_encoded_point(
+                    SECP256R1(),
+                    device_public_key_bytes,
+                )
+                private_value = int.from_bytes(
+                    bytes.fromhex(PRIVATE_KEY),
+                    byteorder="big",
+                )
+                private_key = derive_private_key(private_value, SECP256R1())
+                self._shared_secret = private_key.exchange(
+                    ECDH(),
+                    device_public_key,
+                )
+                await self._send_packet(
+                    pattern=NEGOTIATION_PATTERN,
+                    cmd="4022",
+                    parameters={
+                        "a1": {
+                            "key": bytes.fromhex("a1"),
+                            "type": None,
+                            "value": lambda self: self._timestamp(),
+                        },
+                        # a3: UTC offset, signed int32 LE, seconds west of UTC.
+                        "a3": {
+                            "key": bytes.fromhex("a3"),
+                            "type": None,
+                            "value": self._offset_seconds_west(),
+                        },
+                        "a5": {
+                            "key": bytes.fromhex("a5"),
+                            "type": None,
+                            "value": (get_posix_tz() or FALLBACK_TZ).encode(),
+                        },
+                    },
+                )
+
+            # Stage 6: register the client token to authorize the link.
+            case "4822":
+                await self._send_packet(
+                    pattern=NEGOTIATION_PATTERN,
+                    cmd="4027",
+                    parameters={
+                        "a1": {
+                            "key": bytes.fromhex("a1"),
+                            "type": None,
+                            "value": lambda self: self._timestamp(),
+                        },
+                        "a2": {
+                            "key": bytes.fromhex("a2"),
+                            "type": None,
+                            "value": self._client_token.encode(),
+                        },
+                    },
+                )
+
+            # Stage 7: authorization result.
+            case "4827":
+                if plaintext[:1] == b"\x00":
+                    _LOGGER.debug("Client registration accepted; link authorized!")
+                    self._authorized = True
+                elif plaintext[:1] == b"\x09":
+                    _LOGGER.info(
+                        "Device is awaiting a physical button press to authorize "
+                        "this client; press the button on the device.",
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Unexpected 4027 registration status: %s",
+                        plaintext[:1].hex(),
+                    )
+
+            case _:
+                _LOGGER.warning(
+                    "Received unexpected encrypted negotiation response! cmd: %s",
+                    cmd.hex(),
+                )
+
+    async def _process_arm_grant(self, cmd: bytes, payload: bytes) -> None:
+        """Handle the unsolicited authorization grant on pattern ``030101``.
+
+        The device pushes a ``4827`` with status ``0`` here once the operator
+        presses the button for a newly registered client token, authorizing the
+        link.
+
+        :param cmd: The command code of the grant frame.
+        :param payload: The (still encrypted) frame payload.
+        """
+        plaintext = self._decrypt_payload(payload)
+        if cmd.hex() == "4827" and plaintext[:1] == b"\x00":
+            _LOGGER.debug("Client authorized via button press!")
+            self._authorized = True
+        else:
+            _LOGGER.debug(
+                "Unexpected 030101 frame: cmd %s, payload %s",
+                cmd.hex(),
+                plaintext.hex(),
+            )
+
+    def _offset_seconds_west(self) -> bytes:
+        """UTC offset as the firmware reads it: signed int32 LE, seconds west.
+
+        POSIX counts seconds *west* of UTC, so US-Eastern in summer is
+        ``+14400`` and zones east of UTC are negative.
+        """
+        gmtoff = time.localtime().tm_gmtoff
+        seconds_west = -gmtoff if gmtoff is not None else 0
+        return seconds_west.to_bytes(4, byteorder="little", signed=True)
 
     def _timestamp(self) -> bytes:
         """Unix timestamp in byte form (4B)."""
@@ -1053,6 +1418,8 @@ class SolixBLEDevice:
         self._fragment_buffers = {}
         self._fragment_totals = {}
         self._shared_secret = None
+        self._authorized = False
+        self._auth_mode = None
         self._last_packet_timestamp = None
         self._negotiation_timestamp = None
         self._packet_futures: dict[bytes, list[asyncio.Future]] = {}
