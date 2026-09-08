@@ -36,6 +36,47 @@ _NEGOTIATION_PATTERN = b"\x03\x00\x01"
 #: Encrypted session (data command) packet pattern.
 _SESSION_PATTERN = b"\x03\x00\x0f"
 
+CMD_PORT_OUTPUT = "4207"
+
+#: On/off template for the ``4207`` command. ``a2`` is the port index and ``a3`` the
+#: state; ``_send_command`` appends the timestamp. Indices ``0``/``1`` (AC outlets) and
+#: ``5`` (usb_c4) are confirmed from the app's cleartext BLE log, the rest inferred.
+PARAMETERS_ON_OFF = {
+    "a1": {
+        "value": "21",
+    },
+    "a2": {
+        "type": 1,
+        "value": lambda port: port,
+    },
+    "a3": {
+        "type": 1,
+        "value": lambda on: 1 if on else 0,
+    },
+}
+
+#: Auto-off timer command, inferred from the A2345 charger's ``4209``; the app exposes a
+#: timer on every switchable port (AC outlets and USB-C), so the frame is not captured.
+CMD_PORT_TIMER = "4209"
+
+PARAMETERS_TIMER = {
+    "a1": {
+        "value": "21",
+    },
+    "a2": {
+        "type": 1,
+        "value": lambda port: port,
+    },
+    "a3": {
+        "type": 4,
+        "value": lambda seconds: seconds.to_bytes(
+            length=5,
+            byteorder="little",
+            signed=False,
+        ),
+    },
+}
+
 
 class PrimeChargingStation240w(SolixBLEDevice):
     """Anker Prime Charging Station (240W / A91B2), an 8-in-1 charging station.
@@ -448,3 +489,243 @@ class PrimeChargingStation240w(SolixBLEDevice):
         if not self._data or "ab" not in self._data:
             return DEFAULT_METADATA_BOOL
         return bool(self._parse_int("ab", begin=1, end=2))
+
+    async def turn_usb_c1_on(self) -> None:
+        """Turn USB port C1 on.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=2,
+            on=True,
+        )
+
+    async def turn_usb_c1_off(self) -> None:
+        """Turn USB port C1 off.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=2,
+            on=False,
+        )
+
+    async def turn_usb_c2_on(self) -> None:
+        """Turn USB port C2 on.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=3,
+            on=True,
+        )
+
+    async def turn_usb_c2_off(self) -> None:
+        """Turn USB port C2 off.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=3,
+            on=False,
+        )
+
+    async def turn_usb_c3_on(self) -> None:
+        """Turn USB port C3 on.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=4,
+            on=True,
+        )
+
+    async def turn_usb_c3_off(self) -> None:
+        """Turn USB port C3 off.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=4,
+            on=False,
+        )
+
+    async def turn_usb_c4_on(self) -> None:
+        """Turn USB port C4 on.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=5,
+            on=True,
+        )
+
+    async def turn_usb_c4_off(self) -> None:
+        """Turn USB port C4 off.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=5,
+            on=False,
+        )
+
+    async def turn_ac_1_on(self) -> None:
+        """Turn AC outlet 1 on.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=0,
+            on=True,
+        )
+
+    async def turn_ac_1_off(self) -> None:
+        """Turn AC outlet 1 off.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=0,
+            on=False,
+        )
+
+    async def turn_ac_2_on(self) -> None:
+        """Turn AC outlet 2 on.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=1,
+            on=True,
+        )
+
+    async def turn_ac_2_off(self) -> None:
+        """Turn AC outlet 2 off.
+
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_OUTPUT,
+            parameters=PARAMETERS_ON_OFF,
+            port=1,
+            on=False,
+        )
+
+    async def set_timer_usb_c1(self, time: int) -> None:
+        """Set auto off timer for USB C1.
+
+        :param time: Seconds until shutdown.
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_TIMER,
+            parameters=PARAMETERS_TIMER,
+            port=2,
+            seconds=time,
+        )
+
+    async def set_timer_usb_c2(self, time: int) -> None:
+        """Set auto off timer for USB C2.
+
+        :param time: Seconds until shutdown.
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_TIMER,
+            parameters=PARAMETERS_TIMER,
+            port=3,
+            seconds=time,
+        )
+
+    async def set_timer_usb_c3(self, time: int) -> None:
+        """Set auto off timer for USB C3.
+
+        :param time: Seconds until shutdown.
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_TIMER,
+            parameters=PARAMETERS_TIMER,
+            port=4,
+            seconds=time,
+        )
+
+    async def set_timer_usb_c4(self, time: int) -> None:
+        """Set auto off timer for USB C4.
+
+        :param time: Seconds until shutdown.
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_TIMER,
+            parameters=PARAMETERS_TIMER,
+            port=5,
+            seconds=time,
+        )
+
+    async def set_timer_ac_1(self, time: int) -> None:
+        """Set auto off timer for AC outlet 1.
+
+        :param time: Seconds until shutdown.
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_TIMER,
+            parameters=PARAMETERS_TIMER,
+            port=0,
+            seconds=time,
+        )
+
+    async def set_timer_ac_2(self, time: int) -> None:
+        """Set auto off timer for AC outlet 2.
+
+        :param time: Seconds until shutdown.
+        :raises ConnectionError: If not connected to device.
+        :raises BleakError: If command transmission fails.
+        """
+        await self._send_command(
+            cmd=CMD_PORT_TIMER,
+            parameters=PARAMETERS_TIMER,
+            port=1,
+            seconds=time,
+        )

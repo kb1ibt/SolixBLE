@@ -3,9 +3,11 @@
 .. moduleauthor:: kb1ibt
 """
 
+from unittest import mock
+
 import pytest
 
-from SolixBLE.constructs import Parameters
+from SolixBLE.constructs import Packet, Parameters
 from SolixBLE.devices.prime_charging_station_240w import PrimeChargingStation240w
 from SolixBLE.states import PortStatus
 from tests.const import MOCK_BLE_DEVICE
@@ -57,6 +59,48 @@ async def test_station_snapshot_decodes_ports_and_ac() -> None:
     }
     for prop, value in expected.items():
         assert getattr(device, prop) == value, f"Mismatch for '{prop}'"
+
+
+@pytest.mark.parametrize(
+    ("call", "prefix"),
+    [
+        # a2 = port index, a3 = state; trailing fe0503<ts> varies.
+        ("turn_ac_1_on", "a10121a2020100a3020101"),  # index 0, on
+        ("turn_ac_2_off", "a10121a2020101a3020100"),  # index 1, off
+        ("turn_usb_c1_on", "a10121a2020102a3020101"),  # index 2, on
+    ],
+)
+@pytest.mark.asyncio
+async def test_port_control_builds_cbc_4207_command(call: str, prefix: str) -> None:
+    """A port on/off call sends a CBC 4207 with the port index in a2 and state in a3."""
+    device = PrimeChargingStation240w(MOCK_BLE_DEVICE)
+    device._shared_secret = bytes.fromhex("00112233445566778899aabbccddeeff" * 2)
+    device._client = mock.AsyncMock()
+
+    await getattr(device, call)()
+
+    (_uuid, packet), _kwargs = device._client.write_gatt_char.call_args
+    parsed = Packet.parse(packet)
+    assert parsed.cmd.hex() == "4207"
+    plaintext = device._decrypt_payload(parsed.payload_bytes)
+    assert plaintext.hex().startswith(prefix)
+
+
+@pytest.mark.asyncio
+async def test_set_timer_builds_cbc_4209_command() -> None:
+    """A timer call sends a CBC 4209 with the port index in a2 and seconds in a3."""
+    device = PrimeChargingStation240w(MOCK_BLE_DEVICE)
+    device._shared_secret = bytes.fromhex("00112233445566778899aabbccddeeff" * 2)
+    device._client = mock.AsyncMock()
+
+    await device.set_timer_usb_c1(300)
+
+    (_uuid, packet), _kwargs = device._client.write_gatt_char.call_args
+    parsed = Packet.parse(packet)
+    assert parsed.cmd.hex() == "4209"
+    plaintext = device._decrypt_payload(parsed.payload_bytes)
+    # a2 = index 2 (usb_c1), a3 = 300s as a 5-byte LE int; trailing fe0503<ts> varies.
+    assert plaintext.hex().startswith("a10121a2020102a306042c01000000")
 
 
 @pytest.mark.asyncio
