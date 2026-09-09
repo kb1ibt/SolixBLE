@@ -120,21 +120,24 @@ class C2000G2(C1000G2):
     Use this class to connect, monitor and control a Gen 2 C2000(X) power
     station. This model is also known as the A1783.
 
-    The C2000 G2 is the larger sibling of the C1000 G2 (A1763) and shares its
-    Gen 2 BLE stack: the same ``c421``/``c900`` telemetry framing and TLV field
-    map, the same ``4100`` poll command, and the same AC (``4101``) and DC
-    (``4102``) control. Its three USB-C ports, single USB-A port, AC, DC and
-    solar all decode identically, so the port and power properties come
-    unchanged from :class:`~SolixBLE.devices.c1000g2.C1000G2`.
+    .. note::
+       :collapsible: closed
 
-    On top of that it adds the parts of the Gen 2 frame that had not been
-    decoded when the C1000 G2 class was written -- the ``4103`` system group
-    (display switch, brightness, timeout, and the SoC limits), the ``a3``/``a6``
-    status and time-remaining fields, the ``f9`` version block including its
-    per-submodule slots, and the ``c0`` expansion-battery block for the BP2000.
+       The C2000 G2 is the larger sibling of the C1000 G2 (A1763) and shares its
+       Gen 2 BLE stack: the same ``c421``/``c900`` telemetry framing and TLV field
+       map, the same ``4100`` poll command, and the same AC (``4101``) and DC
+       (``4102``) control. Its three USB-C ports, single USB-A port, AC, DC and
+       solar all decode identically, so the port and power properties come
+       unchanged from :class:`~SolixBLE.devices.c1000g2.C1000G2`.
 
-    It also receives the ``c490`` protobuf device-summary post (armed by
-    :meth:`enable_realtime_telemetry`), decoded into the :attr:`summary` map.
+       On top of that it adds the parts of the Gen 2 frame that had not been
+       decoded when the C1000 G2 class was written -- the ``4103`` system group
+       (display switch, brightness, timeout, and the SoC limits), the ``a3``/``a6``
+       status and time-remaining fields, the ``f9`` version block including its
+       per-submodule slots, and the ``c0`` expansion-battery block for the BP2000.
+
+       It also receives the ``c490`` protobuf device-summary post (armed by
+       :meth:`enable_realtime_telemetry`), decoded into the :attr:`summary` map.
     """
 
     #: The Gen 2 telemetry set plus the ``c490`` protobuf device-summary post.

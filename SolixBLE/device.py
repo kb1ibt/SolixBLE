@@ -161,8 +161,8 @@ class SolixBLEDevice:
         self._authorized: bool = False
         self._client_token: str = client_token or str(uuid.uuid4())
         self._auth_mode: bytes | None = None
-        self._summary: dict[str, object] = {}
-        self._summary_schema: str | None = None
+        self._data_summary: dict[str, object] = {}
+        self._data_summary_schema: str | None = None
 
     @property
     def _encrypted_negotiation(self) -> bool:
@@ -470,7 +470,7 @@ class SolixBLEDevice:
 
         :returns: Mapping of ``.path`` to value.
         """
-        return self._summary
+        return self._data_summary
 
     @property
     def summary_schema(self) -> str | None:
@@ -482,7 +482,7 @@ class SolixBLEDevice:
 
         :returns: The schema name, or None.
         """
-        return self._summary_schema
+        return self._data_summary_schema
 
     def _parse_int(
         self, key: str, begin: int = None, end: int = None, signed: bool = False
@@ -575,7 +575,7 @@ class SolixBLEDevice:
         so it is logged.
         """
         validated = self._VALIDATED_SUMMARY_SCHEMA
-        schema = self._summary_schema
+        schema = self._data_summary_schema
         if validated is None or schema is None or schema == validated:
             return
         got = _schema_version(schema)
@@ -821,16 +821,16 @@ class SolixBLEDevice:
                         # Protobuf device-summary frames (e.g the c490) are not
                         # the flat TLV the other telemetry frames use.
                         if cmd.hex() in self._PROTOBUF_TELEMETRY_COMMANDS:
-                            self._summary = walk_protobuf(
+                            self._data_summary = walk_protobuf(
                                 self._protobuf_body(decrypted_payload)
                             )
-                            self._summary_schema = self._protobuf_schema(
+                            self._data_summary_schema = self._protobuf_schema(
                                 decrypted_payload
                             )
                             self._check_summary_schema()
                             _LOGGER.debug(
-                                f"Protobuf summary ({len(self._summary)} fields, "
-                                f"schema {self._summary_schema})"
+                                f"Protobuf summary ({len(self._data_summary)} fields, "
+                                f"schema {self._data_summary_schema})"
                             )
                             return None
 
@@ -1571,8 +1571,8 @@ class SolixBLEDevice:
         self._shared_secret = None
         self._authorized = False
         self._auth_mode = None
-        self._summary = {}
-        self._summary_schema = None
+        self._data_summary = {}
+        self._data_summary_schema = None
         self._last_packet_timestamp = None
         self._negotiation_timestamp = None
         self._packet_futures: dict[bytes, list[asyncio.Future]] = {}
