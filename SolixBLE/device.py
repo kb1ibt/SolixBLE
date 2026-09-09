@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives.padding import PKCS7
 
 from SolixBLE.advertisement import CAPABILITY_ENCRYPTED_ECDH
 from SolixBLE.constructs import FragmentedPayload, Packet, ParameterDict, Parameters
-from SolixBLE.utilities import _to_bytes, get_posix_tz
+from SolixBLE.utilities import _offset_seconds_west, _to_bytes, get_posix_tz
 
 from .const import (
     DEFAULT_METADATA_INT,
@@ -1063,7 +1063,7 @@ class SolixBLEDevice:
                         "a3": {
                             "key": bytes.fromhex("a3"),
                             "type": None,
-                            "value": self._offset_seconds_west(),
+                            "value": _offset_seconds_west(),
                         },
                         "a5": {
                             "key": bytes.fromhex("a5"),
@@ -1134,16 +1134,6 @@ class SolixBLEDevice:
                 cmd.hex(),
                 plaintext.hex(),
             )
-
-    def _offset_seconds_west(self) -> bytes:
-        """UTC offset as the firmware reads it: signed int32 LE, seconds west.
-
-        POSIX counts seconds *west* of UTC, so US-Eastern in summer is
-        ``+14400`` and zones east of UTC are negative.
-        """
-        gmtoff = time.localtime().tm_gmtoff
-        seconds_west = -gmtoff if gmtoff is not None else 0
-        return seconds_west.to_bytes(4, byteorder="little", signed=True)
 
     def _timestamp(self) -> bytes:
         """Unix timestamp in byte form (4B)."""

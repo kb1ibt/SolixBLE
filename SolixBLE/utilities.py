@@ -8,6 +8,7 @@ import asyncio
 import importlib.resources as resources
 import inspect
 import logging
+import time
 from typing import Callable
 
 import tzlocal
@@ -103,3 +104,16 @@ def get_posix_tz() -> str | None:
             return lines[-1].decode("ascii").strip()
     except Exception:
         _LOGGER.exception("Unable to determine system time zone!")
+
+
+def _offset_seconds_west() -> bytes:
+    """UTC offset as the firmware reads it: signed int32 LE, seconds west.
+
+    POSIX counts seconds *west* of UTC, so US-Eastern in summer is ``+14400``
+    and zones east of UTC are negative.
+
+    :returns: The signed 4-byte little-endian offset in seconds west of UTC.
+    """
+    gmtoff = time.localtime().tm_gmtoff
+    seconds_west = -gmtoff if gmtoff is not None else 0
+    return seconds_west.to_bytes(4, byteorder="little", signed=True)
