@@ -10,31 +10,22 @@ import time
 
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
-from cryptography.hazmat.primitives.asymmetric.ec import (
-    ECDH,
-    SECP256R1,
-    EllipticCurvePublicKey,
-    derive_private_key,
-)
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from ..const import (
-    DEFAULT_METADATA_BOOL,
     DEFAULT_METADATA_FLOAT,
     DEFAULT_METADATA_STRING,
+    NEGOTIATION_PATTERN,
     UUID_COMMAND,
 )
 from ..constructs import Packet, ParameterDict, Parameters
 from ..device import SolixBLEDevice
-from ..prime_device import PRIVATE_KEY
 from ..states import PortStatus
 
 _LOGGER = logging.getLogger(__name__)
 
-#: Cleartext-negotiation / confer packet pattern (``0xxx`` and ``4022``/``4023``).
-_NEGOTIATION_PATTERN = b"\x03\x00\x01"
-#: Encrypted session (data command) packet pattern.
-_SESSION_PATTERN = b"\x03\x00\x0f"
+#: Session (data-command) packet pattern, sent under the CBC session key. Confer
+#: commands (``4022``/``4023``) reuse ``NEGOTIATION_PATTERN`` from :mod:`SolixBLE.const`.
+SESSION_PATTERN = "03000f"
 
 CMD_PORT_OUTPUT = "4207"
 
@@ -79,24 +70,23 @@ PARAMETERS_TIMER = {
 
 
 class PrimeChargingStation240w(SolixBLEDevice):
-    """Anker Prime Charging Station (240W / A91B2), an 8-in-1 charging station.
+    """
+    Anker Prime Charging Station (240W).
 
-    It shares the Prime USB-charger per-port telemetry layout but is a base/**CBC**
-    device, so it inherits :class:`SolixBLEDevice`, whose crypto is capability-driven
-    (AES-CBC when the advert lacks the ECDH bit). The USB-charger decode is defined on
-    the class directly.
+    Use this class to connect, monitor and control a 240W charging station.
+    This model is also known as the A91B2. It is an 8-in-1 station: six switchable
+    ports -- two AC outlets and USB-C 1-4 -- plus two telemetry-only USB-A ports.
 
-    Two telemetry frames with **different tag layouts** are handled:
+    .. note::
+       :collapsible: closed
 
-    * ``4a00`` (msgtype ``0a00``) -- full snapshot: ``a4``-``a9`` = the six USB ports
-      plus ``aa``/``ab`` = the two AC-outlet switch states. Requested with ``4200``.
-    * ``4303`` (msgtype ``0303``) -- ~1/s stream: the same six ports one tag earlier
-      (``a2``-``a7``). Remapped onto the snapshot tags and merged into :attr:`_data`,
-      so the one ``usb_c*``/``usb_a*`` property set reflects either frame and the
-      snapshot-only AC switches persist between streamed updates. Started with ``420b``.
-
-    No cloud/account data is needed: the confer is self-contained and the device serial
-    (which it binds) comes from the negotiation itself (``0829`` stage, ``a4``).
+       Unlike the Prime chargers this is a base/CBC device -- its advert lacks the
+       ECDH capability bit -- so it inherits :class:`SolixBLEDevice` and negotiates in
+       the clear. Two telemetry frames are handled: the ``4a00`` snapshot (ports at
+       ``a4``-``a9``, AC-outlet states at ``aa``/``ab``) and the ~1/s ``4303`` stream
+       (the same ports one tag earlier, ``a2``-``a7``, remapped onto the snapshot
+       layout). No cloud/account data is needed; the device serial it binds comes from
+       the ``0829`` negotiation stage.
     """
 
     #: Base/CBC device: negotiate in the clear and encrypt the session with AES-CBC.
@@ -108,6 +98,11 @@ class PrimeChargingStation240w(SolixBLEDevice):
 
     #: Local timezone string the app sends in the ``4022`` confer.
     _TIMEZONE = "EST5EDT,M3.2.0,M11.1.0"
+
+    #: Seconds between realtime-stream re-arms. The A91B2's ``420b`` latch is not
+    #: persistent -- the ``4303`` stream stops ~8-10s after each trigger -- so
+    #: :meth:`_keep_alive` re-requests it well inside that window.
+    _KEEP_ALIVE_INTERVAL = 6
 
     #: Where each port lives in the ``4a00`` snapshot -- the layout the ``usb_*``
     #: properties read from :attr:`_data`.
@@ -140,102 +135,31 @@ class PrimeChargingStation240w(SolixBLEDevice):
         """Return the current unix time as a 4-byte little-endian hex string."""
         return int(time.time()).to_bytes(4, "little").hex()
 
-    async def _send_session(self, pattern: bytes, cmd: str, plaintext: bytes) -> None:
+    async def _send_session(self, pattern: str, cmd: str, plaintext: bytes) -> None:
         """Encrypt (CBC) and send a session/confer command; no response awaited."""
         packet = Packet.build(
             {
-                "pattern": pattern,
+                "pattern": bytes.fromhex(pattern),
                 "cmd": bytes.fromhex(cmd),
                 "payload_bytes": self._encrypt_payload(plaintext),
             },
         )
         await self._client.write_gatt_char(UUID_COMMAND, packet, response=True)
 
-    async def _exchange(
-        self,
-        cmd: str,
-        payload_hex: str,
-        resp_cmd: str,
-        timeout: int = 6,  # noqa: ASYNC109 -- the reply future needs its own bound
-    ) -> bytes | None:
-        """Send a cleartext ``0xxx`` negotiation frame and await its ``08xx`` reply."""
-        future = asyncio.get_running_loop().create_future()
-        resp = bytes.fromhex(resp_cmd)
-        self._register_future(future, _NEGOTIATION_PATTERN, resp)
-        try:
-            packet = Packet.build(
-                {
-                    "pattern": _NEGOTIATION_PATTERN,
-                    "cmd": bytes.fromhex(cmd),
-                    "payload_bytes": bytes.fromhex(payload_hex),
-                },
-            )
-            await self._client.write_gatt_char(UUID_COMMAND, packet, response=True)
-            return await asyncio.wait_for(future, timeout)
-        except (TimeoutError, asyncio.CancelledError):
-            return None
-        finally:
-            self._deregister_future(future, _NEGOTIATION_PATTERN, resp)
-
     # ------------------------------------------------------------- negotiation
 
-    async def _initiate_negotiations(self) -> None:
-        """Run the whole cleartext (``0xxx``) handshake and derive the CBC session key.
+    async def _process_negotiation(self, cmd: bytes, payload: bytes) -> None:
+        """Capture the device serial from stage ``0829``, then run the base handshake.
 
-        The staged frames capture the device identity (``0829``) before the
-        ``0021``/``0821`` ECDH exchange sets :attr:`_shared_secret`.
+        :class:`SolixBLEDevice` drives the whole cleartext (``0xxx``) handshake and
+        derives the CBC session key. The station only needs the identity that flows
+        past in the ``0829`` frame (``a4`` serial, ``a5`` MAC) -- which the base parses
+        but does not retain -- so it binds it here before delegating. The device's
+        ``4022``/``4023`` confer acks also arrive here and fall through to the base.
         """
-        private_key = derive_private_key(int(PRIVATE_KEY, 16), SECP256R1())
-        public_key = private_key.public_key().public_bytes(
-            Encoding.X962,
-            PublicFormat.UncompressedPoint,
-        )[1:]
-
-        stages = (
-            ("0001", "a104" + self._ts(), "0801"),
-            ("0003", "a104" + self._ts() + "a30120a40200f0", "0803"),
-            ("0029", "a104" + self._ts(), "0829"),
-            ("0005", "a104" + self._ts() + "a30120a40200f0a50140", "0805"),
-        )
-        for cmd, payload, resp_cmd in stages:
-            response = await self._exchange(cmd, payload, resp_cmd)
-            if response is None:
-                _LOGGER.warning(
-                    "A91B2 '%s' negotiation stalled awaiting %s",
-                    self.name,
-                    resp_cmd,
-                )
-                return
-            # Stage 3 (0829) carries the device identity: a4 = serial, a5 = MAC.
-            if cmd == "0029":
-                self._device_info = self._params(response)
-
-        response = await self._exchange("0021", "a140" + public_key.hex(), "0821")
-        if response is None:
-            _LOGGER.warning("A91B2 '%s' no device public key (0821)", self.name)
-            return
-        device_public_key = EllipticCurvePublicKey.from_encoded_point(
-            SECP256R1(),
-            b"\x04" + self._params(response)["a1"],
-        )
-        self._shared_secret = private_key.exchange(ECDH(), device_public_key)
-        self._negotiation_timestamp = time.time()
-        _LOGGER.debug(
-            "A91B2 '%s' negotiated (serial=%s)",
-            self.name,
-            self.serial_number,
-        )
-
-    async def _process_negotiation(self, cmd: bytes, payload: bytes) -> None:  # noqa: ARG002
-        """No-op: the station negotiates in the clear in :meth:`_initiate_negotiations`.
-
-        A stray ``030001`` frame (a confer ack not consumed by a future) is just logged.
-        """
-        _LOGGER.debug(
-            "A91B2 '%s' ignoring unsolicited 030001 cmd %s",
-            self.name,
-            cmd.hex(),
-        )
+        if cmd.hex() == "0829":
+            self._device_info = self._params(self._decrypt_payload(payload))
+        await super()._process_negotiation(cmd, payload)
 
     # --------------------------------------------------------------- telemetry
 
@@ -276,40 +200,63 @@ class PrimeChargingStation240w(SolixBLEDevice):
         return await super()._process_telemetry(parameters)
 
     async def _post_connect(self) -> None:
-        """Send the CBC confer, request the full snapshot, and start the stream.
+        """Confer the session (timezone + serial bind), then start the stream.
 
-        Runs on every (re)connection once the session is negotiated. Fire-and-forget:
-        confer acks are harmless (see :meth:`_process_negotiation`), and ``4a00``/
-        ``4303`` responses flow through the telemetry path.
+        Runs on every (re)connection once the session is negotiated. The one-time
+        confer (``4022``/``4023``) lives here; the periodic stream re-arm is in
+        :meth:`_keep_alive`, so the confer is never re-sent. Fire-and-forget: confer
+        acks are handled in :meth:`_process_negotiation`, and ``4a00``/``4303``
+        responses flow through the telemetry path.
         """
         serial = self._device_info.get("a4", b"")
         timezone = self._TIMEZONE.encode().hex()
 
         # 4022 -- timezone; 4023 -- bind device serial (both AES-CBC, 030001).
         await self._send_session(
-            _NEGOTIATION_PATTERN,
+            NEGOTIATION_PATTERN,
             "4022",
             bytes.fromhex("a104" + self._ts() + "a30440380000a516" + timezone),
         )
         await asyncio.sleep(0.4)
         await self._send_session(
-            _NEGOTIATION_PATTERN,
+            NEGOTIATION_PATTERN,
             "4023",
             bytes.fromhex("a104" + self._ts() + "a310") + serial,
         )
         await asyncio.sleep(0.4)
-        # 4200 -- status request (-> 4a00 snapshot); 420b -- realtime trigger (-> 4303).
+        await self._request_stream()
+
+    async def _request_stream(self) -> None:
+        """Request a fresh snapshot and (re-)arm the realtime stream.
+
+        ``4200`` draws the ``4a00`` snapshot (whose ``aa``/``ab`` AC-switch states the
+        ``4303`` stream omits); ``420b`` arms the ``4303`` stream. Shared by the
+        connect-time :meth:`_post_connect` and the periodic :meth:`_keep_alive`.
+        """
         await self._send_session(
-            _SESSION_PATTERN,
+            SESSION_PATTERN,
             "4200",
             bytes.fromhex("a10121fe0503" + self._ts()),
         )
         await asyncio.sleep(0.4)
         await self._send_session(
-            _SESSION_PATTERN,
+            SESSION_PATTERN,
             "420b",
             bytes.fromhex("a10121fe0503" + self._ts()),
         )
+
+    async def _keep_alive(self) -> int | None:
+        """Re-arm the realtime stream before the device's ``420b`` latch lapses.
+
+        The A91B2's realtime latch is not persistent -- the ``4303`` stream stops
+        ~8-10s after each trigger -- so re-requesting it here keeps the feed continuous,
+        which in turn keeps the one-time confer in :meth:`_post_connect` from being
+        re-sent by a consumer's staleness poll.
+
+        :returns: Seconds until the next re-arm.
+        """
+        await self._request_stream()
+        return self._KEEP_ALIVE_INTERVAL
 
     # ---------------------------------------------------------------- identity
 
@@ -459,36 +406,29 @@ class PrimeChargingStation240w(SolixBLEDevice):
         """USB A2 port power (W)."""
         return self._port_power("a9")
 
-    @property
-    def usb_total_power_out(self) -> float:
-        """Total output power over the six USB ports (W), from either frame."""
-        if self._data is None:
-            return DEFAULT_METADATA_FLOAT
-        return round(
-            self.usb_c1_power
-            + self.usb_c2_power
-            + self.usb_c3_power
-            + self.usb_c4_power
-            + self.usb_a1_power
-            + self.usb_a2_power,
-            2,
-        )
-
     # ------------------------------------------------ AC outlets (snapshot only)
 
     @property
-    def ac_1_switch(self) -> bool:
-        """AC outlet 1 switch state (from the ``4a00`` snapshot)."""
-        if not self._data or "aa" not in self._data:
-            return DEFAULT_METADATA_BOOL
-        return bool(self._parse_int("aa", begin=1, end=2))
+    def ac_output_1(self) -> PortStatus:
+        """AC output 1 status (from the ``4a00`` snapshot).
+
+        PortStatus.NOT_CONNECTED signifies off.
+        PortStatus.OUTPUT signifies on.
+
+        :returns: Status of AC output 1.
+        """
+        return PortStatus(self._parse_int("aa", begin=1, end=2))
 
     @property
-    def ac_2_switch(self) -> bool:
-        """AC outlet 2 switch state (from the ``4a00`` snapshot)."""
-        if not self._data or "ab" not in self._data:
-            return DEFAULT_METADATA_BOOL
-        return bool(self._parse_int("ab", begin=1, end=2))
+    def ac_output_2(self) -> PortStatus:
+        """AC output 2 status (from the ``4a00`` snapshot).
+
+        PortStatus.NOT_CONNECTED signifies off.
+        PortStatus.OUTPUT signifies on.
+
+        :returns: Status of AC output 2.
+        """
+        return PortStatus(self._parse_int("ab", begin=1, end=2))
 
     async def turn_usb_c1_on(self) -> None:
         """Turn USB port C1 on.

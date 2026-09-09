@@ -53,9 +53,8 @@ async def test_station_snapshot_decodes_ports_and_ac() -> None:
         "usb_c1_current": 3.0,
         "usb_c1_power": 15.0,
         "usb_c2_power": 0.0,
-        "usb_total_power_out": 15.0,
-        "ac_1_switch": True,
-        "ac_2_switch": False,
+        "ac_output_1": PortStatus.OUTPUT,
+        "ac_output_2": PortStatus.NOT_CONNECTED,
     }
     for prop, value in expected.items():
         assert getattr(device, prop) == value, f"Mismatch for '{prop}'"
@@ -104,6 +103,45 @@ async def test_set_timer_builds_cbc_4209_command() -> None:
 
 
 @pytest.mark.asyncio
+async def test_keep_alive_rearms_stream_without_reconfer() -> None:
+    """_keep_alive re-requests the stream (4200 + 420b) on its interval and never
+    re-sends the one-time confer (4022/4023) -- so a lapsing 4303 stream is revived
+    without churning the serial bind.
+    """
+    device = PrimeChargingStation240w(MOCK_BLE_DEVICE)
+    device._shared_secret = bytes.fromhex("00112233445566778899aabbccddeeff" * 2)
+    device._client = mock.AsyncMock()
+
+    interval = await device._keep_alive()
+
+    assert interval == device._KEEP_ALIVE_INTERVAL
+    sent = [
+        Packet.parse(call.args[1]).cmd.hex()
+        for call in device._client.write_gatt_char.call_args_list
+    ]
+    assert sent == ["4200", "420b"]
+
+
+@pytest.mark.asyncio
+async def test_post_connect_sends_confer_then_stream() -> None:
+    """_post_connect sends the one-time confer (4022/4023) then requests the stream
+    (4200/420b) -- covering both the NEGOTIATION_PATTERN and SESSION_PATTERN paths.
+    """
+    device = PrimeChargingStation240w(MOCK_BLE_DEVICE)
+    device._shared_secret = bytes.fromhex("00112233445566778899aabbccddeeff" * 2)
+    device._device_info = {"a4": b"A91B2TESTSN00001"}
+    device._client = mock.AsyncMock()
+
+    await device._post_connect()
+
+    sent = [
+        Packet.parse(call.args[1]).cmd.hex()
+        for call in device._client.write_gatt_char.call_args_list
+    ]
+    assert sent == ["4022", "4023", "4200", "420b"]
+
+
+@pytest.mark.asyncio
 async def test_station_stream_remaps_onto_snapshot() -> None:
     """The 4303 stream (a2-a7) is remapped onto the snapshot tags (a4-a9)."""
     device = PrimeChargingStation240w(MOCK_BLE_DEVICE)
@@ -114,7 +152,6 @@ async def test_station_stream_remaps_onto_snapshot() -> None:
     expected = {
         "usb_c1_voltage": 5.0,
         "usb_c1_power": 15.0,
-        "usb_total_power_out": 15.0,
     }
     for prop, value in expected.items():
         assert getattr(device, prop) == value, f"Mismatch for '{prop}'"

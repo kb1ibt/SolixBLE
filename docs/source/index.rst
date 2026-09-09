@@ -150,7 +150,7 @@ Prime charger support
 Parameter               250w (A2345)  240w (A91B2)  160w (A2687)  MagGo 3in1 (A25X7)
 ======================= ============= ============= ============= ===================
 Display status          ❌            ❌            ❌            ❌
-Total power out         ❌            ✅            ❌            ✅
+Total power out         ❌            ❌            ❌            ✅
 Port on/off control     ✅            ✅            ✅            ❌
 Port protocol control   ❌            ❌            ❌            ❌
 Timer control           ✅            ✅            ✅            ❌
@@ -165,8 +165,8 @@ Serial number           ❌            ✅            ❌            ❌
 ======================= ============= ============= ============= ===================
 
 The 240w (A91B2) is an 8-in-1 charging station: it decodes the same per-USB-port
-telemetry as the 250w charger plus its two AC-outlet switch states
-(``ac_1_switch`` / ``ac_2_switch``). Its six switchable ports -- the two AC outlets
+telemetry as the 250w charger plus its two AC-outlet states
+(``ac_output_1`` / ``ac_output_2``). Its six switchable ports -- the two AC outlets
 and USB-C 1-4 -- each turn on or off (``turn_ac_1_on`` … ``turn_usb_c4_off``) and take
 an auto-off timer (``set_timer_ac_1`` … ``set_timer_usb_c4``); the two USB-A ports
 report telemetry only.
