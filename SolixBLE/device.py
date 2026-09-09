@@ -66,6 +66,15 @@ CLIENT_PUBLIC_KEY = (
     "dabccd9b1dc1e288704ca760a0d8c918e5c94823a1f609a4bf07fb4c33ee2190"
 )
 
+#: Client's proposed MTU in the capability negotiation (``a4`` of ``0003``/``0005``).
+#: ``u16`` little-endian ``0x00f0`` = 61440 = "no limit"; the device then streams at
+#: ``min(this, its own ceiling)``.
+NEGOTIATION_MTU_PROPOSAL = "00f0"
+
+#: encryptMethod the client confirms in ``0005`` (``a5``). The device selects ECDH when
+#: ``a5 & 0x44`` is set; ``0x40`` is the base flag.
+NEGOTIATION_ENCRYPT_METHOD = "40"
+
 
 class SolixBLEDevice:
     """Solix BLE device object."""
@@ -774,7 +783,7 @@ class SolixBLEDevice:
                         }, "a4": {
                             "key": bytes.fromhex("a4"),
                             "type": None,
-                            "value": bytes.fromhex("00f0"),
+                            "value": bytes.fromhex(NEGOTIATION_MTU_PROPOSAL),
                         },
                     },
                 )
@@ -826,11 +835,11 @@ class SolixBLEDevice:
                         }, "a4": {
                             "key": bytes.fromhex("a4"),
                             "type": None,
-                            "value": bytes.fromhex("00f0"),
+                            "value": bytes.fromhex(NEGOTIATION_MTU_PROPOSAL),
                         }, "a5": {
                             "key": bytes.fromhex("a5"),
                             "type": None,
-                            "value": bytes.fromhex("40"),
+                            "value": bytes.fromhex(NEGOTIATION_ENCRYPT_METHOD),
                         },
                     },
                 )
@@ -953,7 +962,7 @@ class SolixBLEDevice:
                         "a4": {
                             "key": bytes.fromhex("a4"),
                             "type": None,
-                            "value": bytes.fromhex("00f0"),
+                            "value": bytes.fromhex(NEGOTIATION_MTU_PROPOSAL),
                         },
                     },
                 )
