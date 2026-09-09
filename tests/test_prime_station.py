@@ -129,7 +129,7 @@ async def test_post_connect_sends_confer_then_stream() -> None:
     """
     device = PrimeChargingStation240w(MOCK_BLE_DEVICE)
     device._shared_secret = bytes.fromhex("00112233445566778899aabbccddeeff" * 2)
-    device._device_info = {"a4": b"A91B2TESTSN00001"}
+    device._data_device = {"a4": b"A91B2TESTSN00001"}
     device._client = mock.AsyncMock()
 
     await device._post_connect()

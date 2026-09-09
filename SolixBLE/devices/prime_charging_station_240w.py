@@ -119,7 +119,7 @@ class PrimeChargingStation240w(SolixBLEDevice):
         """Initialise the station, tracking negotiation identity and frame routing."""
         super().__init__(ble_device, capability=capability, client_token=client_token)
         #: Identity captured at negotiation stage ``0829`` (``a4`` serial, ``a5`` MAC).
-        self._device_info: dict[str, bytes] = {}
+        self._data_device: dict[str, bytes] = {}
         #: Command of the telemetry frame currently being processed (``4a00``/``4303``).
         self._routing_cmd: str | None = None
 
@@ -158,7 +158,7 @@ class PrimeChargingStation240w(SolixBLEDevice):
         ``4022``/``4023`` confer acks also arrive here and fall through to the base.
         """
         if cmd.hex() == "0829":
-            self._device_info = self._params(self._decrypt_payload(payload))
+            self._data_device = self._params(self._decrypt_payload(payload))
         await super()._process_negotiation(cmd, payload)
 
     # --------------------------------------------------------------- telemetry
@@ -208,7 +208,7 @@ class PrimeChargingStation240w(SolixBLEDevice):
         acks are handled in :meth:`_process_negotiation`, and ``4a00``/``4303``
         responses flow through the telemetry path.
         """
-        serial = self._device_info.get("a4", b"")
+        serial = self._data_device.get("a4", b"")
         timezone = self._TIMEZONE.encode().hex()
 
         # 4022 -- timezone; 4023 -- bind device serial (both AES-CBC, 030001).
@@ -263,7 +263,7 @@ class PrimeChargingStation240w(SolixBLEDevice):
     @property
     def serial_number(self) -> str:
         """Device serial, bound during negotiation (stage ``0829``, ``a4``)."""
-        serial = self._device_info.get("a4", b"")
+        serial = self._data_device.get("a4", b"")
         return serial.decode("ascii", "ignore") if serial else DEFAULT_METADATA_STRING
 
     # ------------------------------------------------------------- USB ports
