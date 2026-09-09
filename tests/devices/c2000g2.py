@@ -183,6 +183,20 @@ C2000G2_TEST_COMMANDS = [
         ValueError,
         id="c2000g2_dc_timeout_out_of_range",
     ),
+    pytest.param(
+        C2000G2,
+        "set_ac_charging_power",
+        [1200],
+        [("4101", "a10121a40302b004")],
+        id="c2000g2_ac_charging_power",
+    ),
+    pytest.param(
+        C2000G2,
+        "set_ac_charging_power",
+        [400],
+        ValueError,
+        id="c2000g2_ac_charging_power_out_of_range",
+    ),
     # Inherited from the C1000 G2 unchanged -- the AC and DC output switches use
     # the same opcodes and payload on both models.
     pytest.param(

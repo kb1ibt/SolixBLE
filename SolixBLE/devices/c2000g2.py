@@ -10,7 +10,7 @@ from ..const import (
     DEFAULT_METADATA_INT,
     DEFAULT_METADATA_STRING,
 )
-from ..states import ChargingStatus
+from ..states import ChargingStatus, PortStatus
 from .c1000g2 import (
     C1000G2,
     CMD_AC_OUTPUT,
@@ -317,6 +317,23 @@ class C2000G2(C1000G2):
             parameters=_parameters("a3", seconds, type_=3),
         )
 
+    async def set_ac_charging_power(self, watts: int) -> None:
+        """Set the AC charging-power limit (W).
+
+        Read it back with :attr:`ac_input_limit`.
+
+        :param watts: AC charging power limit, 500-1800 W (the range the app
+            offers; sent as ``a4`` under the ``4101`` AC command).
+        :raises ValueError: If the value is out of range.
+        """
+        if not 500 <= watts <= 1800:
+            raise ValueError("AC charging power must be between 500 and 1800 W")
+
+        await self._send_command(
+            cmd=CMD_AC_OUTPUT,
+            parameters=_parameters("a4", watts, type_=2),
+        )
+
     ##############
     #   Status   #
     ##############
@@ -431,6 +448,42 @@ class C2000G2(C1000G2):
         :returns: Limit in watts, or default int value if there is no data.
         """
         return self._parse_int("a4", begin=5, end=7)
+
+    @property
+    def max_input_power(self) -> int:
+        """Device maximum charge-input power (W) -- the hardware ceiling.
+
+        Distinct from :attr:`ac_input_limit`, which is the user-configured
+        limit; this is the fixed maximum the unit can draw.
+
+        :returns: Maximum input power in watts, or default int value if there
+            is no data.
+        """
+        return self._parse_int("a3", begin=5, end=7)
+
+    @property
+    def battery_percentage_a6_9(self) -> int:
+        """Battery percentage reported at ``a6`` offset 9.
+
+        Mirrors :attr:`battery_percentage` (the main-pack SoC) -- the two carry
+        the same value. Neither is the aggregate SoC when an expansion battery
+        is attached; both report the main pack alone.
+
+        :returns: Main-pack SoC percent, or default int value if there is no
+            data.
+        """
+        return self._parse_int("a6", begin=9, end=10)
+
+    @property
+    def ac_input_port(self) -> PortStatus:
+        """AC input (mains) status.
+
+        PortStatus.INPUT signifies the mains lead is present, NOT_CONNECTED that
+        it is absent. Presence only -- it does not imply current is flowing.
+
+        :returns: Status of the AC input.
+        """
+        return PortStatus.from_input_only(self._parse_int("a7", begin=4, end=5))
 
     @property
     def ac_output_timeout(self) -> int:

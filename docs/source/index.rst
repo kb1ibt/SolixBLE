@@ -59,10 +59,10 @@ DC Power out            ✅      ✅         ❌      ✅       ✅       ✅   
 DC Power in status      ✅      ✅         ❌      ❌       ✅       ✅       ❌          ✅    ❌
 DC Power out status     ✅      ❌         ❌      ✅       ✅       ✅       ❌          ✅    ✅
 DC Timer                ✅      ✅         ❌      ❌       ❌       ✅       ❌          ✅    ❌
-Max charge power        ❔      ❔         ❔      ❔       ✅/🚧    ✅/🚧    ❔          ❔    ❔
-Pack voltage            ❔      ❔         ❔      ❔       🚧       🚧       ❔          ❔    ❔
-Cumulative energy out   ❔      ❔         ❔      ❔       🚧       🚧       ❔          ❔    ❔
-Charge presence         ❔      ❔         ❔      ❔       🚧       🚧       ❔          ❔    ❔
+Max charge power        ❔      ❔         ❔      ❔       ❔      ✅       ❔          ❔    ❔
+Pack voltage            ❔      ❔         ❔      ❔       ❌       🚧       ❔          ❔    ❔
+Cumulative energy out   ❔      ❔         ❔      ❔       ❌       🚧       ❔          ❔    ❔
+Charge presence         ❔      ❔         ❔      ❔       ❌       🚧       ❔          ❔    ❔
 USB Power out           ✅      ✅         ✅      ✅       ✅       ✅       ✅          ✅    ✅
 USB Port status         ✅      ✅         ❌      ❌       ✅       ✅       ❌          ✅    ✅
 Light control           ✅      ✅         ✅      ✅       ❌       ❌       ❌          ✅    ❌

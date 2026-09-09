@@ -362,6 +362,9 @@ from tests.helpers import MockDevice
                 "hours_remaining": 1.0,
                 "ac_frequency": 60,
                 "ac_input_limit": 1000,
+                "max_input_power": 1800,
+                "battery_percentage_a6_9": 95,
+                "ac_input_port": PortStatus.INPUT,
                 "ac_output_timeout": 0,
                 "dc_output_timeout": 0,
                 "ac_output_mode": 0,
@@ -406,6 +409,9 @@ from tests.helpers import MockDevice
                 "hours_remaining": 2.7,
                 "ac_frequency": 60,
                 "ac_input_limit": 1000,
+                "max_input_power": 1800,
+                "battery_percentage_a6_9": 80,
+                "ac_input_port": PortStatus.NOT_CONNECTED,
                 "ac_output_timeout": 0,
                 "dc_output_timeout": 0,
                 "ac_output_mode": 0,
@@ -1119,9 +1125,9 @@ async def test_values(
     await device._process_telemetry(parameters)
 
     for class_property, expected_value in mapping.items():
-        assert (
-            getattr(device, class_property) == expected_value
-        ), f"Mismatch for property '{class_property}'!"
+        assert getattr(device, class_property) == expected_value, (
+            f"Mismatch for property '{class_property}'!"
+        )
 
 
 @pytest.mark.asyncio
@@ -1267,7 +1273,6 @@ async def test_negotiation(  # noqa: PLR0913
     :param secret: The expected shared secret.
     """
     async with MockDevice() as mock_bluetooth:
-
         device = device_class(MOCK_BLE_DEVICE)
 
         for packet in packets:
@@ -1280,9 +1285,9 @@ async def test_negotiation(  # noqa: PLR0913
         assert await device.connect(), "Expected connect to return True"
 
         # Assert that the correct shared secret is calculated
-        assert (
-            bytes.fromhex(secret) == device._shared_secret
-        ), "Shared secret does not match expected"
+        assert bytes.fromhex(secret) == device._shared_secret, (
+            "Shared secret does not match expected"
+        )
 
         mock_bluetooth.check_assertions()
 
@@ -1529,7 +1534,7 @@ def test_payload_decryption(
         ),
     ],
 )
-async def test_telemetry_packet_processing(  # noqa: PLR0913, PLR0917
+async def test_telemetry_packet_processing(  # noqa: PLR0913
     fake_time,  # noqa: ANN001, ARG001
     fast_sleep,  # noqa: ANN001, ARG001
     fast_timeouts,  # noqa: ANN001, ARG001
@@ -1559,7 +1564,6 @@ async def test_telemetry_packet_processing(  # noqa: PLR0913, PLR0917
     )
 
     async with MockDevice() as mock_bluetooth:
-
         # We first expect a negotiation
         for expected, response in negotiation_responses.items():
             mock_bluetooth.expect_ordered(
@@ -1579,10 +1583,7 @@ async def test_telemetry_packet_processing(  # noqa: PLR0913, PLR0917
         for packet in packets:
             await mock_bluetooth.send_data([bytes.fromhex(packet)])
 
-    device_parameters = (
-        device._data.to_str(verbose=False)
-        if device._data else None
-    )
+    device_parameters = device._data.to_str(verbose=False) if device._data else None
 
     assert parameters == device_parameters, "Parameters do not match expected!"
 
@@ -1607,7 +1608,7 @@ async def test_telemetry_packet_processing(  # noqa: PLR0913, PLR0917
         ),
     ],
 )
-async def test_generic_packet_processing(  # noqa: PLR0913, PLR0917
+async def test_generic_packet_processing(  # noqa: PLR0913
     caplog,  # noqa: ANN001
     fake_time,  # noqa: ANN001, ARG001
     fast_sleep,  # noqa: ANN001, ARG001
@@ -1639,7 +1640,6 @@ async def test_generic_packet_processing(  # noqa: PLR0913, PLR0917
 
     async with MockDevice() as mock_bluetooth:
         with caplog.at_level(logging.DEBUG):
-
             # We first expect a negotiation
             for expected, response in negotiation_responses.items():
                 mock_bluetooth.expect_ordered(
@@ -1660,9 +1660,9 @@ async def test_generic_packet_processing(  # noqa: PLR0913, PLR0917
                 await mock_bluetooth.send_data([bytes.fromhex(packet)])
 
             for expected_log_entry in expected_logs:
-                assert (
-                    expected_log_entry in str(caplog.text)
-                ), f"Expected to find '{expected_log_entry}' in logs but it was not found!"
+                assert expected_log_entry in str(caplog.text), (
+                    f"Expected to find '{expected_log_entry}' in logs but it was not found!"
+                )
 
 
 @pytest.mark.asyncio
@@ -1753,6 +1753,6 @@ async def test_bad_values(
     await device._process_telemetry(parameters)
 
     for class_property, expected_value in mapping.items():
-        assert (
-            getattr(device, class_property) == expected_value
-        ), f"Mismatch for property '{class_property}'!"
+        assert getattr(device, class_property) == expected_value, (
+            f"Mismatch for property '{class_property}'!"
+        )
