@@ -34,7 +34,14 @@ from SolixBLE import (
 )
 from SolixBLE.constructs import Parameters
 from SolixBLE.devices.solarbank2 import MaxLoadSB2
-from SolixBLE.states import GridStatus, LightMode, SBPowerCutoff, SBUsageMode
+from SolixBLE.states import (
+    GridStatus,
+    LightMode,
+    PortSchedule,
+    PortTimer,
+    SBPowerCutoff,
+    SBUsageMode,
+)
 from tests.const import (
     MOCK_BLE_DEVICE,
     NEGOTIATION_RESPONSES_PRIME,
@@ -656,7 +663,8 @@ from tests.helpers import MockDevice
         ),
         pytest.param(
             PrimeCharger250w,
-            "a10131a2080400000014000000a3080400000014000000a4080400000014000000a5080400000014000000a6080400000000000000a7080400000000000000a81104fafffbfffafffbfffafffbfffafffbffa91104fffffffffffffffffffffffffffffffffe0503ff79b569",
+            # ca00 snapshot layout: ports at a4-a9 (a4=usbc_1 ... a9=usba_2).
+            "a10131a4080400000014000000a5080400000014000000a6080400000014000000a7080400000014000000a8080400000000000000a9080400000000000000fe0503ff79b569",
             {
                 "usb_port_c1": PortStatus.NOT_CONNECTED,
                 "usb_c1_current": 0.02,
@@ -687,7 +695,20 @@ from tests.helpers import MockDevice
         ),
         pytest.param(
             PrimeCharger250w,
-            "a10131a2080401881329016400a30804014024d8061c06a4080401004d9d08ee10a5080401084d1809b311a6080401801364003100a70804018013b7003100a8110400000000e80400001a290b1100000000a91104ffffffff0200ffff0a000200fffffffffe05033d7ab569",
+            # usb_c1 (aa) record: switch on; schedule on 08:00 / off 22:00 every day;
+            # countdown armed 3600s with 1800s left. 20-byte block + a fe timestamp.
+            "a10131aa1404010108007f0116007f01100e00000807000000fe05033d7ab569",
+            {
+                "usb_c1_schedule": PortSchedule(1, 8, 0, 0x7F, 1, 22, 0, 0x7F),
+                "usb_c1_timer": PortTimer(1, 3600, 1800),
+                "usb_c2_timer": None,
+            },
+            id="prime_250w_schedule_and_timer",
+        ),
+        pytest.param(
+            PrimeCharger250w,
+            # ca00 snapshot layout: ports at a4-a9 (a4=usbc_1 ... a9=usba_2).
+            "a10131a4080401881329016400a50804014024d8061c06a6080401004d9d08ee10a7080401084d1809b311a8080401801364003100a90804018013b7003100fe05033d7ab569",
             {
                 "usb_port_c1": PortStatus.OUTPUT,
                 "usb_c1_current": 0.297,
@@ -1111,7 +1132,9 @@ from tests.helpers import MockDevice
     ],
 )
 async def test_values(
-    device_class: type[SolixBLEDevice], payload: str, mapping: dict[str, Any]
+    device_class: type[SolixBLEDevice],
+    payload: str,
+    mapping: dict[str, Any],
 ) -> None:
     """
     Test that a payload is parsed into the correct values.
@@ -1348,7 +1371,10 @@ async def test_negotiation(  # noqa: PLR0913
     ],
 )
 def test_payload_decryption(
-    device_class: type[SolixBLEDevice], payload: str, secret: str, decrypted: str
+    device_class: type[SolixBLEDevice],
+    payload: str,
+    secret: str,
+    decrypted: str,
 ):
     """
     Test the decryption of a payload only. This does not test the
@@ -1383,7 +1409,7 @@ def test_payload_decryption(
         pytest.param(
             C1000,
             [
-                "ff092a0003010f440156ecb95eb746de03d40ee711ce99f42837a9554c6382d3f5298a3b0648d8536936"
+                "ff092a0003010f440156ecb95eb746de03d40ee711ce99f42837a9554c6382d3f5298a3b0648d8536936",
             ],
             "645ca871528991eb38ebb327a781e932b1d9d7a613b04c966b317db056c83428",
             None,
@@ -1393,7 +1419,7 @@ def test_payload_decryption(
         pytest.param(
             C1000,
             [
-                "ff09390003010fc40222788d127d8418b41a81719975719a26b32734ea4e44ce244683e31928bb9a2736f9ede939567cddce6b3fb0de68116c"
+                "ff09390003010fc40222788d127d8418b41a81719975719a26b32734ea4e44ce244683e31928bb9a2736f9ede939567cddce6b3fb0de68116c",
             ],
             "645ca871528991eb38ebb327a781e932b1d9d7a613b04c966b317db056c83428",
             None,
@@ -1403,7 +1429,7 @@ def test_payload_decryption(
         pytest.param(
             C1000,
             [
-                "ff09fd0003010fc402121e0e23790307a57d4adabcd8d5ad56c3a9ea3cb5b222b0152438ccd3b980eda40fbde184fa66c80c3372dad179f11cad8799858ab95696e52c7e729af87c1106343ed5be9c042c8912b14f3a0d94b32afbed432e66616e1895ba0ff5e74a6da9401117070c926631e5d7886a07bec0de35aeb689e8bb289f1d7854143dc413f25d4b57d290ca4378cfb8efc275aa779145f98956e934eaced2d1f51cef7dd21a340318bfc14fb5f90ffd33e0e484175512af33593b1f91eb9801d7c2e1ac6d56e8fe7e8883d62226484ed6f1af711d042c5e3d0c186b3f2222293bc71ccf4a156a544d5171e90ee9b6b9b8f36ae058b96e3b88"
+                "ff09fd0003010fc402121e0e23790307a57d4adabcd8d5ad56c3a9ea3cb5b222b0152438ccd3b980eda40fbde184fa66c80c3372dad179f11cad8799858ab95696e52c7e729af87c1106343ed5be9c042c8912b14f3a0d94b32afbed432e66616e1895ba0ff5e74a6da9401117070c926631e5d7886a07bec0de35aeb689e8bb289f1d7854143dc413f25d4b57d290ca4378cfb8efc275aa779145f98956e934eaced2d1f51cef7dd21a340318bfc14fb5f90ffd33e0e484175512af33593b1f91eb9801d7c2e1ac6d56e8fe7e8883d62226484ed6f1af711d042c5e3d0c186b3f2222293bc71ccf4a156a544d5171e90ee9b6b9b8f36ae058b96e3b88",
             ],
             "645ca871528991eb38ebb327a781e932b1d9d7a613b04c966b317db056c83428",
             None,
@@ -1481,7 +1507,7 @@ def test_payload_decryption(
         pytest.param(
             PrimeCharger160w,
             [
-                "ff09da00030111430057e9a883d95e4bc95b5be2baa1c366331abb929258ab5077108dc197254092ef1372bd5a26ef6b51d61dc87082ca8e7985aacad07f64181902c70c0502de2418e366f5f700b13049d9b857e95c85c66a32d64fcf31c8eead9e025ed69c1440170cca149e038501a9544b1baa044a6a65392e154357e137d917fc834e019012a01b9bd18d5ca7dc22bdb0204b0629b3f738f34bafdc26f6bb0781cec80fe547674a6a7a341a018ce3ac81e6eb6b5110d3311db692d174fe363acec5ba606a24b92dcc95a6cdd8fee1843a26694ddd23ac74"
+                "ff09da00030111430057e9a883d95e4bc95b5be2baa1c366331abb929258ab5077108dc197254092ef1372bd5a26ef6b51d61dc87082ca8e7985aacad07f64181902c70c0502de2418e366f5f700b13049d9b857e95c85c66a32d64fcf31c8eead9e025ed69c1440170cca149e038501a9544b1baa044a6a65392e154357e137d917fc834e019012a01b9bd18d5ca7dc22bdb0204b0629b3f738f34bafdc26f6bb0781cec80fe547674a6a7a341a018ce3ac81e6eb6b5110d3311db692d174fe363acec5ba606a24b92dcc95a6cdd8fee1843a26694ddd23ac74",
             ],
             "09486817d949a232b58b47a43cc72d045a617a26f3999d30e1d27e38eae52265",
             """{'a1': '31', 'a2': '02e805', 'a3': '020000', 'a4': '0100', 'a5': '0401a824fe0b3f0b', 'a6': '0400000000000000', 'a7': '0400000000000000', 'a8': '0103', 'a9': '0150', 'aa': '0100', 'ab': '0400000f0f0f000000', 'ac': '0401002c0100002c0100000203', 'ad': '0401002c0100002c0100000300', 'ae': '0401002c0100002c0100000300', 'af': '0100', 'b0': '0100', 'b1': '0101', 'b2': '0101', 'b3': '0101', 'b4': '04e8040000fafffbfffafffbff', 'b5': '04ffffffffffffffffffffffff', 'e0': '0408000000', 'e1': '0480034b53000000000000', 'fe': '0300000000'}""",
@@ -1491,7 +1517,7 @@ def test_payload_decryption(
         pytest.param(
             PrimePowerBank20k,
             [
-                "ff098300030111430044014f704abfd87d1d38fc0d7a35a36efdaf1f9f9f1c799493804dfaa6882d789fb7aeb4d117bd2330cd63c5f13f1e4a089ce80ac2442c66c85fa1f0dcb0d6867d9a58f7a3ee8479ec124724f6d7b84d8a58939c465ffb24e43754a1889be5f8c946d82d93806765835569e75bd67cbd3ac71071159c13a83bb9"
+                "ff098300030111430044014f704abfd87d1d38fc0d7a35a36efdaf1f9f9f1c799493804dfaa6882d789fb7aeb4d117bd2330cd63c5f13f1e4a089ce80ac2442c66c85fa1f0dcb0d6867d9a58f7a3ee8479ec124724f6d7b84d8a58939c465ffb24e43754a1889be5f8c946d82d93806765835569e75bd67cbd3ac71071159c13a83bb9",
             ],
             "5609bc39f79166da75139feb7c335fb7524b3bf0d730db96bf6ebf450d3e165b",
             """{'a1': '31', 'a2': '044d60', 'a3': '04010000', 'a4': '0101', 'a5': '04000000', 'a6': '04000000', 'a7': '0400000000000000', 'a8': '0400000000009600ff00ffffffff00', 'a9': '0400000000000000ff00ffffffff00', 'ac': '040000000000000000', 'af': '011d', 'b0': '011e', 'b1': '020900', 'fe': '0300000000'}""",
@@ -1503,7 +1529,7 @@ def test_payload_decryption(
         pytest.param(
             PrimeCharger160w,
             [
-                "ff09ca000301110300a10131a203024606a303020000a4020100a5080401d8459906bb0ba6080401e81300000000a7080400000000000000a8020103a9020150aa020100ab090400000000000b0b0bac0d0401002c0100002c0100000200ad0d0401002c0100002c0100000201ae0d0401002c0100002c0100000300af020100b0020100b1020100b2020101b30201ffb40d0400000000ac051573fafffbffb50d04ffffffffffffffffffffffffe0050448000000e10b0400000000000000000000fe0503000000006b"
+                "ff09ca000301110300a10131a203024606a303020000a4020100a5080401d8459906bb0ba6080401e81300000000a7080400000000000000a8020103a9020150aa020100ab090400000000000b0b0bac0d0401002c0100002c0100000200ad0d0401002c0100002c0100000201ae0d0401002c0100002c0100000300af020100b0020100b1020100b2020101b30201ffb40d0400000000ac051573fafffbffb50d04ffffffffffffffffffffffffe0050448000000e10b0400000000000000000000fe0503000000006b",
             ],
             "5609bc39f79166da75139feb7c335fb7524b3bf0d730db96bf6ebf450d3e165b",
             """{'a1': '31', 'a2': '024606', 'a3': '020000', 'a4': '0100', 'a5': '0401d8459906bb0b', 'a6': '0401e81300000000', 'a7': '0400000000000000', 'a8': '0103', 'a9': '0150', 'aa': '0100', 'ab': '0400000000000b0b0b', 'ac': '0401002c0100002c0100000200', 'ad': '0401002c0100002c0100000201', 'ae': '0401002c0100002c0100000300', 'af': '0100', 'b0': '0100', 'b1': '0100', 'b2': '0101', 'b3': '01ff', 'b4': '0400000000ac051573fafffbff', 'b5': '04ffffffffffffffffffffffff', 'e0': '0448000000', 'e1': '0400000000000000000000', 'fe': '0300000000'}""",
@@ -1516,7 +1542,7 @@ def test_payload_decryption(
         pytest.param(
             MagGo3in1,
             [
-                "ff094e00030111430044014f7041bf9427bc0ef8117b960f68fd68b88f9b9279303d80490ea7888a709b12adb02ee81b269cc267c5f1c11b499e9c170a1514a45ceafe1bbd3925d3a766ac4aa32d"
+                "ff094e00030111430044014f7041bf9427bc0ef8117b960f68fd68b88f9b9279303d80490ea7888a709b12adb02ee81b269cc267c5f1c11b499e9c170a1514a45ceafe1bbd3925d3a766ac4aa32d",
             ],
             "5609bc39f79166da75139feb7c335fb7524b3bf0d730db96bf6ebf450d3e165b",
             """{'a1': '31', 'a2': '04013a0232001d01', 'a3': '0401c60214008e00', 'a4': '0400f40100000000', 'a5': '04ffff', 'a6': '0400000000', 'fe': '0300000000'}""",
@@ -1526,7 +1552,7 @@ def test_payload_decryption(
         pytest.param(
             MagGo3in1,
             [
-                "ff094e00030111430044014f7041bf9427bc0ef8117b960f68fd7eb8859bc479303d80490ea7888a709b12adb02ee81b269cc267c5f1c11b499e9c170a7a6261f98ce9db7373fe83ccb3d81475e2"
+                "ff094e00030111430044014f7041bf9427bc0ef8117b960f68fd7eb8859bc479303d80490ea7888a709b12adb02ee81b269cc267c5f1c11b499e9c170a7a6261f98ce9db7373fe83ccb3d81475e2",
             ],
             "5609bc39f79166da75139feb7c335fb7524b3bf0d730db96bf6ebf450d3e165b",
             """{'a1': '31', 'a2': '04013a0232001d01', 'a3': '0401d0021e00d800', 'a4': '0400f40100000000', 'a5': '04ffff', 'a6': '0400000000', 'fe': '0300000000'}""",
@@ -1597,7 +1623,7 @@ async def test_telemetry_packet_processing(  # noqa: PLR0913
         pytest.param(
             PrimeCharger160w,
             [
-                "ff09ca000301110300a10131a203024606a303020000a4020100a5080401e042b105b209a6080401e81300000000a7080400000000000000a8020103a9020150aa020100ab090400000000000b0b0bac0d0401002c0100002c0100000200ad0d0401002c0100002c0100000201ae0d0401002c0100002c0100000300af020100b0020100b1020100b2020101b30201ffb40d0400000000ac051573fafffbffb50d04ffffffffffffffffffffffffe0050448000000e10b0400000000000000000000fe05030000000074"
+                "ff09ca000301110300a10131a203024606a303020000a4020100a5080401e042b105b209a6080401e81300000000a7080400000000000000a8020103a9020150aa020100ab090400000000000b0b0bac0d0401002c0100002c0100000200ad0d0401002c0100002c0100000201ae0d0401002c0100002c0100000300af020100b0020100b1020100b2020101b30201ffb40d0400000000ac051573fafffbffb50d04ffffffffffffffffffffffffe0050448000000e10b0400000000000000000000fe05030000000074",
             ],
             "5609bc39f79166da75139feb7c335fb7524b3bf0d730db96bf6ebf450d3e165b",
             [

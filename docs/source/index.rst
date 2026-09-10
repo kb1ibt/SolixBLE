@@ -160,7 +160,7 @@ Individual port current ✅            ✅            ✅            ❌
 Individual port power   ✅            ✅            ✅            ✅
 AC outlet state         N/A           ✅            N/A           N/A
 Temperature             ❌            ❌            ❌            ❌
-Firmware version        ❌            ❌            ❌            ❌
+Firmware version        ❌            ✅            ❌            ❌
 Serial number           ❌            ✅            ❌            ❌
 ======================= ============= ============= ============= ===================
 

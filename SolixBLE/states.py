@@ -4,7 +4,80 @@
 
 """
 
+from dataclasses import dataclass
 from enum import Enum
+
+
+@dataclass(frozen=True)
+class PortSchedule:
+    """A Prime port's auto on/off schedule (from the ``0a00`` snapshot).
+
+    The start (``定时开``) and end (``定时关``) triggers each carry an enable byte, an
+    ``hour``/``minute`` time, and a weekday bitmask: bit 0 = Monday ... bit 6 = Sunday
+    (``0x7f`` = every day, ``0x00`` = no repeat). The enable byte reads ``1`` when the
+    trigger is armed, ``0`` when cleared, and ``0xff`` when unset. Raw snapshot bytes
+    are surfaced as ints.
+    """
+
+    start_switch: int
+    start_hour: int
+    start_minute: int
+    start_weekdays: int
+    end_switch: int
+    end_hour: int
+    end_minute: int
+    end_weekdays: int
+
+    @classmethod
+    def from_record(cls, block: bytes):
+        """Decode a schedule from a switchable outlet's ``0a00`` record.
+
+        :param block: The record's value bytes; the start trigger is bytes 2-5 and
+            the end trigger bytes 6-9, each ``switch``/``hour``/``minute``/``weekdays``.
+        :returns: The schedule, or None if the record is too short.
+        """
+        if len(block) < 10:
+            return None
+        return cls(
+            start_switch=block[2],
+            start_hour=block[3],
+            start_minute=block[4],
+            start_weekdays=block[5],
+            end_switch=block[6],
+            end_hour=block[7],
+            end_minute=block[8],
+            end_weekdays=block[9],
+        )
+
+
+@dataclass(frozen=True)
+class PortTimer:
+    """A Prime port's countdown/auto-off timer (from the ``0a00`` snapshot).
+
+    ``switch`` is the enable byte, ``seconds`` the configured countdown and
+    ``remaining_seconds`` the live time left. A disarmed timer keeps its last
+    ``seconds``/``remaining_seconds``, so read them alongside ``switch``.
+    """
+
+    switch: int
+    seconds: int
+    remaining_seconds: int
+
+    @classmethod
+    def from_record(cls, block: bytes):
+        """Decode a timer from a switchable outlet's ``0a00`` record.
+
+        :param block: The record's value bytes; ``switch`` is at offset 10 and the
+            configured/remaining u32s at offsets 11 and 15.
+        :returns: The timer, or None if the record is too short.
+        """
+        if len(block) < 19:
+            return None
+        return cls(
+            switch=block[10],
+            seconds=int.from_bytes(block[11:15], "little"),
+            remaining_seconds=int.from_bytes(block[15:19], "little"),
+        )
 
 
 class PortStatus(Enum):
@@ -124,6 +197,68 @@ class DisplayTimeout(Enum):
     #: 1800 seconds (30m).
     S1800 = 1800
 
+
+class ScreenTimeout(Enum):
+    """A91B2 screen-off timeout (the ``0a00.ad`` low nibble)."""
+
+    #: The screen timeout is unknown.
+    UNKNOWN = -1
+
+    #: Screen always on.
+    ALWAYS = 0
+
+    #: 30 seconds.
+    THIRTY_SECONDS = 1
+
+    #: 1 minute.
+    ONE_MINUTE = 2
+
+    #: 5 minutes.
+    FIVE_MINUTES = 3
+
+    #: 30 minutes.
+    THIRTY_MINUTES = 4
+
+
+class ClockFormat(Enum):
+    """A91B2 clock display format (``0a00.b4``)."""
+
+    #: The clock format is unknown.
+    UNKNOWN = -1
+
+    #: 12-hour clock.
+    HOUR_12 = 0
+
+    #: 24-hour clock.
+    HOUR_24 = 1
+
+
+class AcLightMode(Enum):
+    """A91B2 AC-outlet LED indicator mode (``0a00.b5``)."""
+
+    #: The indicator mode is unknown.
+    UNKNOWN = -1
+
+    #: Normal brightness.
+    NORMAL = 0
+
+    #: Dimmed for sleep.
+    SLEEP = 1
+
+
+class ChargingMode(Enum):
+    """A91B2 charging mode (``0a00.ae`` byte 0)."""
+
+    #: The charging mode is unknown.
+    UNKNOWN = -1
+
+    #: Smart Dynamic Allocation (default).
+    SMART_DYNAMIC = 0
+
+    #: Recommended mode for high-power equipment (sub-mode via ``ae`` byte 1).
+    HIGH_POWER = 1
+
+
 class TemperatureUnit(Enum):
     """The status of the temperature unit of the device."""
 
@@ -135,6 +270,7 @@ class TemperatureUnit(Enum):
 
     #: Display unit is Fahrenheit.
     FAHRENHEIT = 1
+
 
 class GridStatus(Enum):
     """The grid connection status."""
