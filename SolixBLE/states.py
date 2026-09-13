@@ -203,6 +203,9 @@ class DisplayTimeout(Enum):
     #: The status of the display timeout is unknown.
     UNKNOWN = -1
 
+    #: Always on.
+    S0 = 0
+
     #: 20 seconds.
     S20 = 20
 
@@ -309,3 +312,42 @@ class PortOverload(Enum):
 
     #: USB C3 overload detected.
     USB_C3 = 10
+
+
+class ClockFormat(Enum):
+    """The format of the clock on the display of the device."""
+
+    #: The clock format is unknown.
+    UNKNOWN = -1
+
+    #: 12 hour clock.
+    HOUR_12 = 0
+
+    #: 24 hour clock.
+    HOUR_24 = 1
+
+
+class AcLightMode(Enum):
+    """The mode of the indicator light on the AC outlets of the device."""
+
+    #: The mode is unknown.
+    UNKNOWN = -1
+
+    #: Normal brightness.
+    NORMAL = 0
+
+    #: Dimmed for sleep.
+    SLEEP = 1
+
+
+class ChargingMode(Enum):
+    """The charging mode of the device."""
+
+    #: The charging mode is unknown.
+    UNKNOWN = -1
+
+    #: Power is allocated between the ports dynamically.
+    SMART_DYNAMIC = 0
+
+    #: Power is reserved for high power equipment, with a sub-mode selecting how much.
+    HIGH_POWER = 1
