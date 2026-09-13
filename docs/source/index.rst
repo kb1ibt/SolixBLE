@@ -145,8 +145,8 @@ Individual port voltage  ✅            ✅            ❌
 Individual port current  ✅            ✅            ❌
 Individual port power    ✅            ✅            ✅
 Temperature              ❌            ❌            ❌
-Firmware version         ❌            ❌            ❌
-Serial number            ❌            ❌            ❌
+Firmware version         ✅            ❌            ❌
+Serial number            ✅            ❌            ❌
 ======================= ============= ============= ===================
 
 
