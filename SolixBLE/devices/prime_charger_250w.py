@@ -4,7 +4,10 @@
 
 """
 
-from ..const import DEFAULT_METADATA_FLOAT
+import asyncio
+
+from ..const import DEFAULT_METADATA_FLOAT, DEFAULT_METADATA_STRING
+from ..constructs import Parameters
 from ..prime_device import PrimeDevice
 from ..states import PortSchedule, PortStatus, PortTimer
 
@@ -12,7 +15,13 @@ from ..states import PortSchedule, PortStatus, PortTimer
 #: be sent every ~10 seconds or no telemetry will be sent by the device.
 CMD_SUB_AND_KEEP_ALIVE = "420b"
 SUB_AND_KEEP_ALIVE_PAYLOAD = "a10121"
-KEEP_ALIVE_INTERNAL = 10
+KEEP_ALIVE_INTERVAL = 9
+
+#: Command that requests the ca00 snapshot. It is sent with every keep-alive
+#: so the settings the snapshot carries stay fresh, with a pause before the
+#: stream is re-armed so the two replies do not collide.
+CMD_REQUEST_SNAPSHOT = "4200"
+SNAPSHOT_TO_STREAM_DELAY = 0.4
 
 CMD_USB_OUTPUT = "4207"
 CMD_USB_TIMER = "4209"
@@ -90,12 +99,59 @@ class PrimeCharger250w(PrimeDevice):
     #: per-port schedule and timer records at aa-ae.
     _SNAPSHOT_COMMANDS = ("ca00",)
 
+    #: Serial number the device reports in negotiation stage 3.
+    _serial_number: bytes | None = None
+
+    async def _process_negotiation_encrypted(self, cmd: bytes, plaintext: bytes) -> None:
+        """Keep the serial number the device reports in negotiation stage 3.
+
+        :param cmd: The command code of the response.
+        :param plaintext: The decrypted response.
+        """
+        if cmd.hex() == "4829":
+            parameters = Parameters.parse(plaintext[1:])
+            if "a4" in parameters:
+                self._serial_number = parameters["a4"].value_legacy
+        await super()._process_negotiation_encrypted(cmd, plaintext)
+
     async def _keep_alive(self) -> int | None:
+        await self._send_command(
+            cmd=CMD_REQUEST_SNAPSHOT,
+            parameters=PARAMETERS_KEEP_ALIVE,
+        )
+        await asyncio.sleep(SNAPSHOT_TO_STREAM_DELAY)
         await self._send_command(
             cmd=CMD_SUB_AND_KEEP_ALIVE,
             parameters=PARAMETERS_KEEP_ALIVE,
         )
-        return KEEP_ALIVE_INTERNAL
+        return KEEP_ALIVE_INTERVAL
+
+    @property
+    def serial_number(self) -> str:
+        """Serial number of the device.
+
+        :returns: Serial number or default str value if not yet negotiated.
+        """
+        if self._serial_number is None:
+            return DEFAULT_METADATA_STRING
+
+        return self._serial_number.decode("ascii")
+
+    @property
+    def software_version(self) -> str:
+        """Software version of the device.
+
+        The snapshot reports it as a 16-bit integer whose decimal digits are
+        the four parts of the version (2116 is version 2.1.1.6).
+
+        :returns: Version string or default str value if no snapshot has been received.
+        """
+        record = self._record("a2")
+        if len(record) < 3:
+            return DEFAULT_METADATA_STRING
+
+        version = int.from_bytes(record[1:3], byteorder="little")
+        return f"{version // 1000}.{version // 100 % 10}.{version // 10 % 10}.{version % 10}"
 
     @property
     def usb_port_c1(self) -> PortStatus:

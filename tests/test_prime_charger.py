@@ -9,6 +9,7 @@ from unittest import mock
 import pytest
 
 from SolixBLE import PortSchedule, PortTimer, PrimeCharger250w
+from SolixBLE.const import DEFAULT_METADATA_STRING
 from SolixBLE.constructs import Packet
 from tests.const import MOCK_BLE_DEVICE
 
@@ -22,6 +23,14 @@ SNAPSHOT_C1_SCHEDULE_AND_TIMER = (
 STREAM_PORTS = (
     "a10131a2080401881329016400a30804014024d8061c06a4080401004d9d08ee10a5080401"
     "084d1809b311a6080401801364003100a70804018013b7003100fe05033d7ab569"
+)
+#: A ca00 snapshot carrying only the software version, 2116 as a 16-bit integer.
+SNAPSHOT_VERSION = "a203024408"
+#: The device's negotiation stage 3 reply, with its serial number at a4.
+PLAIN_4829 = (
+    "00a10103a2054553503332a307302e302e302e33a410"
+    + b"A2345TESTSN00001".hex()
+    + "a5067ce91346c50c"
 )
 SESSION_PATTERN = "030111"
 TEST_SECRET = bytes(range(32))
@@ -101,6 +110,46 @@ async def test_reset_session_clears_snapshot_with_data() -> None:
     device._reset_session()
     assert device._record("aa") == b""
     assert device.usb_c1_timer is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_sleep")
+async def test_keep_alive_requests_snapshot_then_stream() -> None:
+    """The keep-alive requests a fresh snapshot, then re-arms the stream."""
+    device = _device()
+    device._client = mock.AsyncMock()
+
+    await device._keep_alive()
+
+    sent = [
+        Packet.parse(call.args[1]).cmd.hex()
+        for call in device._client.write_gatt_char.call_args_list
+    ]
+    assert sent == ["4200", "420b"]
+
+
+@pytest.mark.asyncio
+async def test_software_version_from_snapshot() -> None:
+    """The snapshot's 16-bit version integer reads as its four decimal digits."""
+    device = _device()
+    assert device.software_version == DEFAULT_METADATA_STRING
+
+    await _receive(device, "ca00", SNAPSHOT_VERSION)
+    assert device.software_version == "2.1.1.6"
+
+
+@pytest.mark.asyncio
+async def test_serial_number_from_negotiation() -> None:
+    """The serial number the device reports in negotiation stage 3 is kept."""
+    device = _device()
+    assert device.serial_number == DEFAULT_METADATA_STRING
+
+    with mock.patch.object(device, "_send_packet", new=mock.AsyncMock()):
+        await device._process_negotiation_encrypted(
+            bytes.fromhex("4829"),
+            bytes.fromhex(PLAIN_4829),
+        )
+    assert device.serial_number == "A2345TESTSN00001"
 
 
 @pytest.mark.asyncio
