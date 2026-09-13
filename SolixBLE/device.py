@@ -20,7 +20,8 @@ from bleak_retry_connector import establish_connection
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from SolixBLE.advertisement import CAPABILITY_ENCRYPTED_ECDH
-from SolixBLE.constructs import FragmentedPayload, Packet, ParameterDict, Parameters
+from SolixBLE.constructs import FragmentedPayload, Packet, Parameter, ParameterDict, Parameters
+from SolixBLE.parsing import SummaryField, name_summary, walk_protobuf
 from SolixBLE.utilities import (
     _offset_seconds_west,
     _to_bytes,
@@ -64,6 +65,17 @@ class SolixBLEDevice:
     #: override this if their model uses different telemetry command codes
     #: (e.g the C1000 Gen 2 uses ``c421``/``c900`` instead of ``c402``/``c405``).
     _TELEMETRY_COMMANDS: tuple[str, ...] = ("c402", "4300", "c405")
+
+    #: Telemetry command codes whose payload is a protobuf device-summary blob
+    #: (walked via :func:`SolixBLE.parsing.walk_protobuf`) rather than the flat
+    #: TLV the other telemetry frames use. Subclasses set this (e.g the C2000
+    #: G2's ``c490``).
+    _PROTOBUF_TELEMETRY_COMMANDS: tuple[str, ...] = ()
+
+    #: Field maps for the device-summary post, keyed by the schema name the
+    #: frame carries. A frame naming a schema not listed here is kept by its
+    #: raw ``.path`` keys and logged once.
+    _SUMMARY_MAPS: dict[str, dict[str, SummaryField]] = {}
 
     #: The maximum packet size an Anker device is able to send
     _mtu = 253
@@ -120,6 +132,10 @@ class SolixBLEDevice:
         self._authorized: bool = False
         self._pairing_required: bool = False
         self._pairing_callbacks: list[Callable[[], None]] = []
+        self._data_summary: dict[str, object] = {}
+        self._data_summary_schema: str | None = None
+        self._last_summary_timestamp: datetime | None = None
+        self._unmapped_summary_schemas: set[str | None] = set()
 
     @property
     def _encrypted_negotiation(self) -> bool:
@@ -466,6 +482,41 @@ class SolixBLEDevice:
         """
         return self._last_data_timestamp
 
+    @property
+    def summary(self) -> dict[str, object]:
+        """Fields from the latest device-summary post, if any.
+
+        .. note::
+           :collapsible: closed
+
+           Some devices post a second live frame alongside their telemetry
+           stream, encoded as a protobuf message against a schema the device
+           names in the frame. Fields of a known schema appear under their
+           names with scaling applied; anything else is kept under its raw
+           ``.path``. The post is device-initiated and cannot be requested, so
+           this stays empty until one arrives, which on some devices may be
+           never in a session (see the device's page).
+
+        :returns: Mapping of field name to value.
+        """
+        return self._data_summary
+
+    @property
+    def summary_schema(self) -> str | None:
+        """The schema name of the latest device-summary post.
+
+        :returns: The schema name, or None until a post has been received.
+        """
+        return self._data_summary_schema
+
+    @property
+    def last_summary_update(self) -> datetime | None:
+        """Timestamp of the last device-summary post.
+
+        :returns: Timestamp of the last post or None.
+        """
+        return self._last_summary_timestamp
+
     def _parse_int(
         self, key: str, begin: int = None, end: int = None, signed: bool = False
     ) -> int:
@@ -498,6 +549,88 @@ class SolixBLEDevice:
             if self._data
             else DEFAULT_METADATA_STRING
         )
+
+    @staticmethod
+    def _protobuf_body(payload: bytes) -> bytes:
+        """Return the protobuf blob carried in a device-post's outer ``a2`` field.
+
+        A protobuf device post (e.g. the C2000 G2's ``c490``) is a multi-field
+        outer TLV: ``a1`` -- a one-byte command echo -- then ``a2``, whose value
+        *is* the protobuf blob, then a trailing ``a3`` string. ``a2`` is a
+        ``bin`` field with a 2-byte little-endian length and an ``04`` type byte,
+        so the header is ``a1 <len8> <val> a2 <len16> 04``. The slice is bounded
+        to ``a2``'s declared length so the walk sees exactly the protobuf and
+        nothing else.
+
+        :param payload: The decrypted device-post frame.
+        :returns: The protobuf blob (``a2``'s value), or the whole payload if it
+            is too short to carry the wrapper.
+        """
+        if len(payload) <= 6:
+            return payload
+        # Skip the a1 TLV (tag + 1-byte length + value) to reach the a2 field.
+        a2_start = 2 + payload[1]
+        # a2's 2-byte length counts its 04 type byte + the protobuf value, so the
+        # blob is that length minus the type byte, after tag+len+type.
+        a2_length = int.from_bytes(payload[a2_start + 1 : a2_start + 3], "little")
+        blob_start = a2_start + 4
+        return payload[blob_start : blob_start + a2_length - 1]
+
+    @staticmethod
+    def _protobuf_schema(payload: bytes) -> str | None:
+        """Return the c490 frame's trailing ``a3`` schema name, if present.
+
+        The schema (e.g ``charging_pps_series_c_0005``) follows the ``a2``
+        protobuf blob and names the revision the protobuf was posted against.
+        Like ``a2``, ``a3`` is a typed parameter whose value is the
+        null-terminated name, so it is read through the parameter parser and
+        the terminator stripped rather than sliced out by offset.
+
+        :param payload: The decrypted device-post frame.
+        :returns: The schema string, or None if it is absent or not ASCII.
+        """
+        if len(payload) <= 6:
+            return None
+        a2_start = 2 + payload[1]
+        a2_length = int.from_bytes(payload[a2_start + 1 : a2_start + 3], "little")
+        a3_start = a2_start + a2_length + 3
+        if a3_start + 2 > len(payload) or payload[a3_start] != 0xA3:
+            return None
+        a3_length = payload[a3_start + 1]
+        if a3_start + 2 + a3_length > len(payload):
+            return None
+        try:
+            value = bytes(Parameter.parse(payload[a3_start:]).value or b"")
+            return value.rstrip(b"\x00").decode("ascii")
+        except UnicodeDecodeError:
+            return None
+
+    def _process_summary(self, payload: bytes) -> None:
+        """Decode a device-summary post into :attr:`summary`.
+
+        The frame's schema name selects the field map; packed arrays declared
+        in the map are decoded as arrays rather than walked as sub-messages.
+
+        :param payload: The decrypted device-post frame.
+        """
+        schema = self._protobuf_schema(payload)
+        fields = self._SUMMARY_MAPS.get(schema) if schema is not None else None
+        if fields is None and schema not in self._unmapped_summary_schemas:
+            self._unmapped_summary_schemas.add(schema)
+            _LOGGER.warning(
+                f"'{self.name}' posts device-summary schema '{schema}', which has no "
+                f"field map; its fields are kept by path only!",
+            )
+
+        arrays = {path: f.array for path, f in (fields or {}).items() if f.array}
+        raw = walk_protobuf(self._protobuf_body(payload), arrays=arrays or None)
+        self._data_summary = name_summary(raw, fields)
+        self._data_summary_schema = schema
+        self._last_summary_timestamp = datetime.now()
+        _LOGGER.debug(
+            f"Device summary ({len(self._data_summary)} fields, schema {schema})",
+        )
+        self._run_state_changed_callbacks()
 
     def _gcm_key_nonce(self) -> tuple[bytes, bytes]:
         """Return the AES-GCM key and nonce for the encrypted path.
@@ -688,6 +821,13 @@ class SolixBLEDevice:
                         _LOGGER.debug("Received encrypted telemetry message!")
                         decrypted_payload = self._decrypt_payload(payload)
                         _LOGGER.debug(f"Plain-text payload: {decrypted_payload.hex()}")
+
+                        # Protobuf device-summary frames (e.g the c490) are not
+                        # the flat TLV the other telemetry frames use.
+                        if cmd.hex() in self._PROTOBUF_TELEMETRY_COMMANDS:
+                            self._process_summary(decrypted_payload)
+                            return None
+
                         parameters = Parameters.parse(decrypted_payload)
                         return await self._process_telemetry(parameters)
 
@@ -1399,6 +1539,9 @@ class SolixBLEDevice:
         if reset_data:
             self._data = None
             self._last_data_timestamp = None
+            self._data_summary = {}
+            self._data_summary_schema = None
+            self._last_summary_timestamp = None
 
         self._fragment_buffers = {}
         self._fragment_totals = {}
