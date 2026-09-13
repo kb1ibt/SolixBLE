@@ -99,6 +99,12 @@ is True, within its usual negotiation timeout. When no token is passed the
 class identifier is used, which pairs once per device for every client that
 uses it. Firmware that does not pair clients answers ``00`` straight away.
 
+The device only compares the token, so a value it already trusts pairs
+without a press: on firmware that binds the owning Anker account, passing that
+account's ``owner_user_id`` as the token sends the same registration the app
+does and the device answers ``00`` at once. Obtaining the id needs the Anker
+cloud, which is why it is not the default.
+
 
 Solarbank
 ---------
