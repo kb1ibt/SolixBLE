@@ -30,7 +30,9 @@ from .states import (
     DisplayTimeout,
     LightStatus,
     PortOverload,
+    PortSchedule,
     PortStatus,
+    PortTimer,
     TemperatureUnit,
 )
 from .utilities import discover_devices
@@ -51,7 +53,9 @@ __all__ = [
     "LightStatus",
     "MagGo3in1",
     "PortOverload",
+    "PortSchedule",
     "PortStatus",
+    "PortTimer",
     "PrimeCharger160w",
     "PrimeCharger250w",
     "PrimeDevice",
