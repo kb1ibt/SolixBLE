@@ -75,13 +75,23 @@ class SolixBLEDevice:
     #: The client identifier sent to the device during negotiation.
     _UUID_STRING: str = UUID_STRING
 
-    def __init__(self, ble_device: BLEDevice, capability: int | None = None) -> None:
+    def __init__(
+        self,
+        ble_device: BLEDevice,
+        capability: int | None = None,
+        client_token: str | None = None,
+    ) -> None:
         """Initialise device object. Does not connect automatically.
 
         :param ble_device: The bleak device to wrap.
         :param capability: The capability byte from the device's advertisement,
             see :func:`SolixBLE.advertisement.capability_from_advertisement`.
             It selects the negotiation path; None uses the class default.
+        :param client_token: Identifier registered with the device on the
+            encrypted path. Firmware that pairs clients asks for a button press
+            the first time it sees a token and accepts that token silently from
+            then on, so pass the same value on every connection. None uses the
+            class default identifier.
         """
 
         _LOGGER.debug(
@@ -106,6 +116,10 @@ class SolixBLEDevice:
         self._capability: int | None = capability
         self._private_key: EllipticCurvePrivateKey | None = None
         self._auth_mode: bytes | None = None
+        self._client_token: str = client_token or self._UUID_STRING
+        self._authorized: bool = False
+        self._pairing_required: bool = False
+        self._pairing_callbacks: list[Callable[[], None]] = []
 
     @property
     def _encrypted_negotiation(self) -> bool:
@@ -157,6 +171,35 @@ class SolixBLEDevice:
         :raises ValueError: If callback does not exist.
         """
         self._state_changed_callbacks.remove(function)
+
+    def add_pairing_callback(self, function: Callable[[], None]) -> None:
+        """Register a callback to be run when the device needs its button pressed.
+
+        Firmware that pairs clients answers the first registration of a new
+        client token by asking for physical confirmation. The callback runs at
+        that point so the user can be told to press the button on the device;
+        :meth:`connect` keeps waiting for the confirmation in the meantime.
+
+        :param function: Function to run when a button press is needed.
+        """
+        self._pairing_callbacks.append(function)
+
+    def remove_pairing_callback(self, function: Callable[[], None]) -> None:
+        """Remove a registered pairing callback.
+
+        :param function: Function to remove from callbacks.
+        :raises ValueError: If callback does not exist.
+        """
+        self._pairing_callbacks.remove(function)
+
+    @property
+    def pairing_required(self) -> bool:
+        """Whether the device is waiting for its button to be pressed.
+
+        :returns: True while the device awaits physical confirmation of this
+            client, else False.
+        """
+        return self._pairing_required
 
     async def _initiate_negotiations(self) -> None:
         """Send the negotiation initiation command.
@@ -253,8 +296,9 @@ class SolixBLEDevice:
                 while not self.negotiated:
 
                     # If we have not received any packet from the device in
-                    # any stage then restart negotiations from the start
-                    if (
+                    # any stage then restart negotiations from the start,
+                    # unless the device is waiting for its button to be pressed
+                    if not self._pairing_required and (
                         self._last_packet_timestamp is None
                         or (time.time() - self._last_packet_timestamp)
                         > NEGOTIATION_RESPONSE_TIMEOUT
@@ -384,7 +428,11 @@ class SolixBLEDevice:
 
         :returns: True/False if session has been negotiated and connected.
         """
-        return self.connected and self._shared_secret is not None
+        return (
+            self.connected
+            and self._shared_secret is not None
+            and (not self._encrypted_negotiation or self._authorized)
+        )
 
     @property
     def available(self) -> bool:
@@ -620,6 +668,11 @@ class SolixBLEDevice:
                 case "030001":
                     _LOGGER.debug("Received negotiation message!")
                     return await self._process_negotiation(cmd, payload)
+
+                # The grant the device pushes once its button has been pressed
+                case "030101":
+                    _LOGGER.debug("Received authorization grant message!")
+                    return await self._process_authorization_grant(cmd, payload)
 
                 # Session messages
                 case "03010f" | "030111":
@@ -1008,7 +1061,7 @@ class SolixBLEDevice:
                         }, "a2": {
                             "key": bytes.fromhex("a2"),
                             "type": None,
-                            "value": self._UUID_STRING.encode(),
+                            "value": self._client_token.encode(),
                         },
                     },
                 )
@@ -1018,12 +1071,64 @@ class SolixBLEDevice:
                 _LOGGER.debug(
                     "Entered negotiation stage 7 due to response from device!",
                 )
-                await self._post_authorize()
+                await self._process_registration_status(plaintext)
 
             case _:
                 _LOGGER.warning(
                     f"Received unexpected negotiation request response from device! cmd: '{cmd.hex()}'"
                 )
+
+    async def _process_registration_status(self, plaintext: bytes) -> None:
+        """Act on the status byte the device returns for a client registration.
+
+        ``00`` authorizes the link. ``09`` means the device is waiting for its
+        button to be pressed to pair this client; the pairing callbacks run and
+        the link stays open until the grant arrives.
+
+        :param plaintext: The decrypted ``4827`` payload.
+        """
+        status = plaintext[:1]
+
+        if status == b"\x00":
+            _LOGGER.debug(f"Client registration accepted by '{self.name}'!")
+            self._authorized = True
+            self._pairing_required = False
+            await self._post_authorize()
+
+        elif status == b"\x09":
+            _LOGGER.info(
+                f"'{self.name}' needs its button pressed to pair this client!"
+            )
+            self._pairing_required = True
+            for function in self._pairing_callbacks:
+                try:
+                    function()
+                except Exception:
+                    _LOGGER.exception(
+                        f"Exception raised by a registered pairing callback '{function}'!"
+                    )
+
+        else:
+            _LOGGER.warning(
+                f"Unexpected client registration status '{status.hex()}' from '{self.name}'!"
+            )
+
+    async def _process_authorization_grant(self, cmd: bytes, payload: bytes) -> None:
+        """Process the grant the device pushes after its button is pressed.
+
+        The grant is a ``4827`` with status ``00`` on its own packet pattern,
+        sent without a request once the user confirms the pairing.
+
+        :param cmd: The command code of the grant.
+        :param payload: The encrypted grant payload.
+        """
+        plaintext = self._decrypt_payload(payload)
+        if cmd.hex() == "4827":
+            await self._process_registration_status(plaintext)
+        else:
+            _LOGGER.warning(
+                f"Unexpected authorization grant from device! cmd: '{cmd.hex()}', payload: '{plaintext.hex()}'"
+            )
 
     def _timestamp(self) -> bytes:
         """Unix timestamp in byte form (4B)."""
@@ -1300,6 +1405,8 @@ class SolixBLEDevice:
         self._shared_secret = None
         self._private_key = None
         self._auth_mode = None
+        self._authorized = False
+        self._pairing_required = False
         self._last_packet_timestamp = None
         self._negotiation_timestamp = None
         self._packet_futures: dict[bytes, list[asyncio.Future]] = {}

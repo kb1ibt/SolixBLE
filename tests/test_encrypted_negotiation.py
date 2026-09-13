@@ -34,9 +34,17 @@ PLAIN_4821 = (
 )
 PLAIN_4822 = "00"
 PLAIN_4827_OK = "00"
+PLAIN_4827_OK_BYTES = b"\x00"
+#: Status 9 with a 30 s countdown: the device is waiting for its button.
+PLAIN_4827_BUTTON = "09a1021e00"
 
 EXPECTED_MTU = 253
 AUTH_MODE_ENCRYPTED = b"\x02"
+#: An uncompressed P-256 point without its prefix byte.
+PUBLIC_POINT_LENGTH = 64
+#: A client token as a caller would persist it. It identifies the client to
+#: the device and is not a secret.
+TEST_TOKEN = "0123456789abcdef"  # noqa: S105
 
 
 def _device() -> SolixBLEDevice:
@@ -111,19 +119,92 @@ async def test_encrypted_negotiation_stages() -> None:
 
         # The 4021 exchange sends the raw X||Y point of this negotiation's key.
         cmd_4021 = next(c for c in send.await_args_list if c.kwargs["cmd"] == "4021")
-        assert len(cmd_4021.kwargs["parameters"]["a1"]["value"]) == 64
+        assert len(cmd_4021.kwargs["parameters"]["a1"]["value"]) == PUBLIC_POINT_LENGTH
 
     sent = [c.kwargs["cmd"] for c in send.await_args_list]
     assert sent == ["4003", "4029", "4005", "4021", "4022", "4027"]
 
 
 @pytest.mark.asyncio
-async def test_registration_result_runs_post_authorize() -> None:
-    """The 4827 registration result hands off to the post-authorize hook."""
+async def test_registration_accepted_authorizes() -> None:
+    """A 4827 status 00 authorizes the link and runs the post-authorize hook."""
     device = _device()
     with mock.patch.object(device, "_post_authorize", new=mock.AsyncMock()) as post:
         await _feed(device, "4827", PLAIN_4827_OK)
+    assert device._authorized is True
+    assert device.pairing_required is False
     post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_registration_status_9_requires_button() -> None:
+    """A 4827 status 09 does not authorize; it asks for the button via callbacks."""
+    device = _device()
+    seen: list[bool] = []
+    device.add_pairing_callback(lambda: seen.append(True))
+    with mock.patch.object(device, "_post_authorize", new=mock.AsyncMock()) as post:
+        await _feed(device, "4827", PLAIN_4827_BUTTON)
+    assert device._authorized is False
+    assert device.pairing_required is True
+    assert seen == [True]
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_button_press_grant_authorizes() -> None:
+    """The grant pushed on pattern 030101 after the button press authorizes."""
+    device = _device()
+    device._pairing_required = True
+    payload = device._encrypt_payload(PLAIN_4827_OK_BYTES)
+    with mock.patch.object(device, "_post_authorize", new=mock.AsyncMock()) as post:
+        await device._process_authorization_grant(bytes.fromhex("4827"), payload)
+    assert device._authorized is True
+    assert device.pairing_required is False
+    post.assert_awaited_once()
+
+
+def test_client_token_defaults_to_class_identifier() -> None:
+    """Without a token the class identifier is registered; a token overrides it."""
+    assert _device()._client_token == SolixBLEDevice._UUID_STRING
+    custom = SolixBLEDevice(
+        MOCK_BLE_DEVICE,
+        capability=4,
+        client_token=TEST_TOKEN,
+    )
+    assert custom._client_token == TEST_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_registration_sends_client_token() -> None:
+    """The 4027 registration carries the client token."""
+    device = SolixBLEDevice(
+        MOCK_BLE_DEVICE,
+        capability=4,
+        client_token=TEST_TOKEN,
+    )
+    with mock.patch.object(device, "_send_packet", new=mock.AsyncMock()) as send:
+        await _feed(device, "4822", PLAIN_4822)
+    cmd_4027 = send.await_args_list[0]
+    assert cmd_4027.kwargs["cmd"] == "4027"
+    assert cmd_4027.kwargs["parameters"]["a2"]["value"] == b"0123456789abcdef"
+
+
+def test_negotiated_requires_authorization_on_encrypted_path() -> None:
+    """On the encrypted path a shared secret alone is not a negotiated session."""
+    device = _device()
+    device._client = mock.Mock(is_connected=True)
+    device._shared_secret = bytes(32)
+    assert device.negotiated is False
+    device._authorized = True
+    assert device.negotiated is True
+
+
+def test_negotiated_on_plain_path_needs_no_authorization() -> None:
+    """The plain-text path is negotiated as soon as the shared secret exists."""
+    device = SolixBLEDevice(MOCK_BLE_DEVICE, capability=0)
+    device._client = mock.Mock(is_connected=True)
+    device._shared_secret = bytes(32)
+    assert device.negotiated is True
 
 
 @pytest.mark.asyncio
