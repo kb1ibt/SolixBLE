@@ -75,6 +75,31 @@ status (``4827``); ``00`` means the link is authorized and telemetry can be
 requested.
 
 
+Pairing with a button press
+---------------------------
+
+Newer firmware pairs clients: the registration carries a client token, and the
+first time the device sees a new token it answers ``4827`` with status ``09``
+and waits for its button to be pressed. Once pressed, the device pushes an
+unsolicited grant (a ``4827`` with status ``00`` on packet pattern ``030101``)
+and the link is authorized. The device remembers the token, so every later
+connection with the same token is authorized without a button press. No account
+or cloud service is involved.
+
+Pass a stable token and persist it so the same client is recognised on every
+connection, and register a callback so the user can be told to press the
+button::
+
+    device = C1000G2(ble_device, capability=capability, client_token=my_token)
+    device.add_pairing_callback(lambda: print("Press the button on the device"))
+    await device.connect()
+
+:meth:`.connect` keeps waiting for the grant while :attr:`.pairing_required`
+is True, within its usual negotiation timeout. When no token is passed the
+class identifier is used, which pairs once per device for every client that
+uses it. Firmware that does not pair clients answers ``00`` straight away.
+
+
 Solarbank
 ---------
 
