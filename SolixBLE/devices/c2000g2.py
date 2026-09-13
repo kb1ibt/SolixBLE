@@ -78,27 +78,81 @@ SUB_PACKAGE_CONNECTED = 1
 #: Bytes of the ``c0`` block that follow its variable-length serial.
 SUB_PACKAGE_TAIL_LENGTH = 15
 
-#: Value width in bytes for each TLV type code.
-TYPE_WIDTHS = {1: 1, 2: 2, 3: 4}
+#: Each setting of the system group is one payload tag: a2 the display switch,
+#: a3 the brightness, a4 the timeout as a 16-bit little endian integer, aa and
+#: ab the charge cap and discharge floor.
+PARAMETERS_DISPLAY = {
+    "a1": {
+        "value": "21",
+    },
+    "a2": {
+        "type": 1,
+        "value": lambda on: 1 if on else 0,
+    },
+}
 
+PARAMETERS_DISPLAY_MODE = {
+    "a1": {
+        "value": "21",
+    },
+    "a3": {
+        "type": 1,
+        "value": lambda mode: mode,
+    },
+}
 
-def _parameters(key: str, value: int, type_: int = 1) -> dict:
-    """Build a single-field payload for one of the group commands.
+PARAMETERS_DISPLAY_TIMEOUT = {
+    "a1": {
+        "value": "21",
+    },
+    "a4": {
+        "type": 2,
+        "value": lambda seconds: seconds.to_bytes(length=2, byteorder="little"),
+    },
+}
 
-    :param key: Payload tag selecting the setting (e.g. "a2", "aa").
-    :param value: Value to set.
-    :param type_: TLV type code: 1 for a byte, 2 for a u16, 3 for a u32.
-    :returns: Parameter dictionary for :meth:`_send_command`.
-    """
-    return {
-        "a1": {
-            "value": "21",
-        },
-        key: {
-            "type": type_,
-            "value": value.to_bytes(TYPE_WIDTHS[type_], byteorder="little"),
-        },
-    }
+PARAMETERS_MAX_BATTERY = {
+    "a1": {
+        "value": "21",
+    },
+    "aa": {
+        "type": 1,
+        "value": lambda percentage: percentage,
+    },
+}
+
+PARAMETERS_MIN_BATTERY = {
+    "a1": {
+        "value": "21",
+    },
+    "ab": {
+        "type": 1,
+        "value": lambda percentage: percentage,
+    },
+}
+
+#: The AC and DC groups take their auto-off timer at a3 as a 32-bit little
+#: endian integer, and the AC group its charging power limit at a4 as a 16-bit
+#: one.
+PARAMETERS_TIMER = {
+    "a1": {
+        "value": "21",
+    },
+    "a3": {
+        "type": 3,
+        "value": lambda seconds: seconds.to_bytes(length=4, byteorder="little"),
+    },
+}
+
+PARAMETERS_AC_CHARGING_POWER = {
+    "a1": {
+        "value": "21",
+    },
+    "a4": {
+        "type": 2,
+        "value": lambda watts: watts.to_bytes(length=2, byteorder="little"),
+    },
+}
 
 
 def _validate_timer(seconds: int) -> None:
@@ -661,7 +715,7 @@ class C2000G2(C1000G2):
         :raises ConnectionError: If not connected to device.
         :raises BleakError: If command transmission fails.
         """
-        await self._send_command(cmd=CMD_SYSTEM, parameters=_parameters("a2", 1))
+        await self._send_command(cmd=CMD_SYSTEM, parameters=PARAMETERS_DISPLAY, on=True)
 
     async def turn_display_off(self) -> None:
         """Turn the display off.
@@ -669,7 +723,11 @@ class C2000G2(C1000G2):
         :raises ConnectionError: If not connected to device.
         :raises BleakError: If command transmission fails.
         """
-        await self._send_command(cmd=CMD_SYSTEM, parameters=_parameters("a2", 0))
+        await self._send_command(
+            cmd=CMD_SYSTEM,
+            parameters=PARAMETERS_DISPLAY,
+            on=False,
+        )
 
     async def set_display_mode(self, mode: LightStatus) -> None:
         """Set the status/mode of the LCD display.
@@ -694,7 +752,8 @@ class C2000G2(C1000G2):
 
         await self._send_command(
             cmd=CMD_SYSTEM,
-            parameters=_parameters("a3", mode.value),
+            parameters=PARAMETERS_DISPLAY_MODE,
+            mode=mode.value,
         )
 
     async def set_display_timeout(self, timeout: DisplayTimeout) -> None:
@@ -710,7 +769,8 @@ class C2000G2(C1000G2):
 
         await self._send_command(
             cmd=CMD_SYSTEM,
-            parameters=_parameters("a4", timeout.value, type_=2),
+            parameters=PARAMETERS_DISPLAY_TIMEOUT,
+            seconds=timeout.value,
         )
 
     async def set_max_battery_percentage(self, percentage: int) -> None:
@@ -730,7 +790,8 @@ class C2000G2(C1000G2):
 
         await self._send_command(
             cmd=CMD_SYSTEM,
-            parameters=_parameters("aa", percentage),
+            parameters=PARAMETERS_MAX_BATTERY,
+            percentage=percentage,
         )
 
     async def set_min_battery_percentage(self, percentage: int) -> None:
@@ -750,7 +811,8 @@ class C2000G2(C1000G2):
 
         await self._send_command(
             cmd=CMD_SYSTEM,
-            parameters=_parameters("ab", percentage),
+            parameters=PARAMETERS_MIN_BATTERY,
+            percentage=percentage,
         )
 
     async def set_ac_timer(self, seconds: int) -> None:
@@ -765,7 +827,8 @@ class C2000G2(C1000G2):
         _validate_timer(seconds)
         await self._send_command(
             cmd=CMD_AC_OUTPUT,
-            parameters=_parameters("a3", seconds, type_=3),
+            parameters=PARAMETERS_TIMER,
+            seconds=seconds,
         )
 
     async def set_dc_timer(self, seconds: int) -> None:
@@ -780,7 +843,8 @@ class C2000G2(C1000G2):
         _validate_timer(seconds)
         await self._send_command(
             cmd=CMD_DC_OUTPUT,
-            parameters=_parameters("a3", seconds, type_=3),
+            parameters=PARAMETERS_TIMER,
+            seconds=seconds,
         )
 
     async def set_ac_charging_power(self, watts: int) -> None:
@@ -799,7 +863,8 @@ class C2000G2(C1000G2):
 
         await self._send_command(
             cmd=CMD_AC_OUTPUT,
-            parameters=_parameters("a4", watts, type_=2),
+            parameters=PARAMETERS_AC_CHARGING_POWER,
+            watts=watts,
         )
 
     async def get_status_update(self) -> ParameterDict:
