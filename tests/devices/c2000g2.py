@@ -75,6 +75,13 @@ C2000G2_TEST_COMMANDS = [
     pytest.param(
         C2000G2,
         "set_display_timeout",
+        [DisplayTimeout.S10],
+        [("4103", "a10121a403020a00")],
+        id="c2000g2_display_timeout_10",
+    ),
+    pytest.param(
+        C2000G2,
+        "set_display_timeout",
         [DisplayTimeout.S60],
         [("4103", "a10121a403023c00")],
         id="c2000g2_display_timeout_60",
@@ -89,7 +96,7 @@ C2000G2_TEST_COMMANDS = [
     pytest.param(
         C2000G2,
         "set_display_timeout",
-        [DisplayTimeout.S30],
+        [DisplayTimeout.UNKNOWN],
         ValueError,
         id="c2000g2_display_timeout_invalid",
     ),

@@ -52,7 +52,14 @@ PARAMETERS_REALTIME_ON = {
 WORK_STATUS_UPDATING = 5
 
 #: Display timeouts the device accepts.
-DISPLAY_TIMEOUTS = (DisplayTimeout.S60, DisplayTimeout.S300, DisplayTimeout.S1800)
+DISPLAY_TIMEOUTS = (
+    DisplayTimeout.S10,
+    DisplayTimeout.S20,
+    DisplayTimeout.S30,
+    DisplayTimeout.S60,
+    DisplayTimeout.S300,
+    DisplayTimeout.S1800,
+)
 
 #: Highest accepted battery percentage for the charge cap / discharge floor.
 MAX_PERCENTAGE = 100
@@ -693,7 +700,7 @@ class C2000G2(C1000G2):
     async def set_display_timeout(self, timeout: DisplayTimeout) -> None:
         """Set the status/mode of the LCD display.
 
-        :param timeout: Mode/timeout to set display to (60s, 5m or 30m).
+        :param timeout: Timeout to set display to (10s, 20s, 30s, 1m, 5m or 30m).
         :raises ValueError: If requested timeout is invalid for this device.
         :raises ConnectionError: If not connected to device.
         :raises BleakError: If command transmission fails.
