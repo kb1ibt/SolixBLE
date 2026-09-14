@@ -319,12 +319,29 @@ class C1000G2(SolixBLEDevice):
         return self._parse_int("a7", begin=2, end=4)
 
     @property
-    def solar_port(self) -> PortStatus:
-        """Solar Port Status.
+    def dc_input_port(self) -> PortStatus:
+        """DC input (XT-60i) port status.
 
-        :returns: Status of the solar port.
+        The shared DC input port, whatever is plugged into it: a solar array or
+        the 12V cigarette-socket car adapter both report here.
+
+        PortStatus.INPUT signifies a source is present, NOT_CONNECTED that the
+        port is empty. Presence only; it does not imply current is flowing.
+
+        :returns: Status of the DC input port.
         """
         return PortStatus.from_input_only(self._parse_int("a8", begin=1, end=2))
+
+    @property
+    def solar_port(self) -> PortStatus:
+        """Alias of :attr:`dc_input_port` (the XT-60i port).
+
+        Kept because the port also takes the 12V car adapter, not only a solar
+        array; :attr:`dc_input_port` is the accurate name.
+
+        :returns: Status of the DC input port.
+        """
+        return self.dc_input_port
 
     @property
     def solar_power_in(self) -> int:

@@ -313,6 +313,7 @@ from tests.helpers import MockDevice
                 "ac_power_in": 0,
                 "ac_power_out": 0,
                 "power_out": 0,
+                "dc_input_port": PortStatus.NOT_CONNECTED,
                 "solar_port": PortStatus.NOT_CONNECTED,
                 "dc_output": PortStatus.NOT_CONNECTED,
                 "max_battery_percentage": 80,
