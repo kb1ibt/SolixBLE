@@ -322,8 +322,10 @@ class C1000G2(SolixBLEDevice):
     def dc_input_port(self) -> PortStatus:
         """DC input (XT-60i) port status.
 
-        The shared DC input port, whatever is plugged into it: a solar array or
-        the 12V cigarette-socket car adapter both report here.
+        The shared DC input port, whatever is plugged into it: a solar array, the
+        12V cigarette-socket car adapter, and the Anker SOLIX Alternator Charger
+        all connect here. (Battery-to-battery vehicle charging and RV expansion
+        use the separate expansion connector, not this port.)
 
         PortStatus.INPUT signifies a source is present, NOT_CONNECTED that the
         port is empty. Presence only; it does not imply current is flowing.
@@ -336,8 +338,9 @@ class C1000G2(SolixBLEDevice):
     def solar_port(self) -> PortStatus:
         """Alias of :attr:`dc_input_port` (the XT-60i port).
 
-        Kept because the port also takes the 12V car adapter, not only a solar
-        array; :attr:`dc_input_port` is the accurate name.
+        Kept because the port takes more than a solar array -- the 12V car
+        adapter and the alternator charger connect here too; :attr:`dc_input_port`
+        is the accurate name.
 
         :returns: Status of the DC input port.
         """
