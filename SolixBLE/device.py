@@ -77,6 +77,12 @@ class SolixBLEDevice:
     #: raw ``.path`` keys and logged once.
     _SUMMARY_MAPS: dict[str, dict[str, SummaryField]] = {}
 
+    #: Command codes (hex) that carry a snapshot for this device: a report of
+    #: its settings sent on request beside the telemetry stream, and kept
+    #: apart from it because the two lay their fields out differently (e.g the
+    #: Prime 250W charger's ``ca00`` beside its ``4303`` stream).
+    _SNAPSHOT_COMMANDS: tuple[str, ...] = ()
+
     #: The maximum packet size an Anker device is able to send
     _mtu = 253
 
@@ -115,6 +121,7 @@ class SolixBLEDevice:
         self._client: BleakClient | None = None
         self._fragment_buffers: dict[bytes, list[FragmentedPayload]] = {}
         self._data: ParameterDict | None = None
+        self._data_snapshot: ParameterDict | None = None
         self._last_data_timestamp: datetime | None = None
         self._last_packet_timestamp: datetime | None = None
         self._negotiation_timestamp: float | None = None
@@ -632,6 +639,16 @@ class SolixBLEDevice:
         )
         self._run_state_changed_callbacks()
 
+    def _record(self, key: str) -> bytes:
+        """Return the bytes of a parameter in the snapshot data.
+
+        :param key: Key of the parameter (e.g aa, ab, ac, ...).
+        :returns: The type byte and value bytes, or empty bytes if no snapshot
+            has been received or it lacks the key.
+        """
+        parameter = None if self._data_snapshot is None else self._data_snapshot.get(key)
+        return parameter.value_legacy if parameter is not None else b""
+
     def _gcm_key_nonce(self) -> tuple[bytes, bytes]:
         """Return the AES-GCM key and nonce for the encrypted path.
 
@@ -695,6 +712,21 @@ class SolixBLEDevice:
         if state_changed:
 
             _LOGGER.debug(self)
+            self._run_state_changed_callbacks()
+
+    async def _process_snapshot(self, parameters: ParameterDict) -> None:
+        """Process a snapshot from the device."""
+
+        state_changed = self._data_snapshot is None or parameters != self._data_snapshot
+
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(f"Snapshot parameters: {parameters.to_str(verbose=True)}")
+
+        # Update internal parameters
+        self._data_snapshot = parameters
+
+        # Run callbacks if state changed
+        if state_changed:
             self._run_state_changed_callbacks()
 
     def _reassemble(self, packet: Packet) -> bytes | None:
@@ -815,6 +847,14 @@ class SolixBLEDevice:
                         _LOGGER.debug("Received non-encrypted telemetry message!")
                         parameters = Parameters.parse(payload)
                         return await self._process_telemetry(parameters)
+
+                    # Snapshot messages
+                    elif cmd.hex() in self._SNAPSHOT_COMMANDS:
+                        _LOGGER.debug("Received snapshot message!")
+                        decrypted_payload = self._decrypt_payload(payload)
+                        _LOGGER.debug(f"Plain-text payload: {decrypted_payload.hex()}")
+                        parameters = Parameters.parse(decrypted_payload)
+                        return await self._process_snapshot(parameters)
 
                     # Encrypted telemetry messages
                     elif cmd.hex() in self._TELEMETRY_COMMANDS:
@@ -1538,6 +1578,7 @@ class SolixBLEDevice:
 
         if reset_data:
             self._data = None
+            self._data_snapshot = None
             self._last_data_timestamp = None
             self._data_summary = {}
             self._data_summary_schema = None
