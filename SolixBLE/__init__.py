@@ -34,7 +34,7 @@ from .states import (
     PortStatus,
     TemperatureUnit,
 )
-from .utilities import discover_devices
+from .utilities import discover_devices, set_region
 
 __all__ = [
     "SolixBLEDevice",
@@ -64,4 +64,5 @@ __all__ = [
     "discover_devices",
     "capability_from_advertisement",
     "device_class_from_advertisement",
+    "set_region",
 ]

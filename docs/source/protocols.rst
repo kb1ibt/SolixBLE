@@ -155,3 +155,67 @@ before connecting:
         print(device.address, device_class and device_class.__name__, capability)
 
     scanner = BleakScanner(detection_callback=detected)
+
+
+Outer protocols
+---------------
+
+On the negotiating transport a device holds a negotiated session for each
+connection. The session's outer protocol is how the negotiation travels and
+which cipher the session uses afterwards; the session cipher follows the
+opening frame.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Outer
+     - Opening
+     - Before keys
+     - Session cipher
+     - Client authorized at
+   * - Plain (:py:class:`SolixBLE.protocols.PlainOuter`)
+     - ``0001``
+     - clear
+     - AES-128-CBC, PKCS7
+     - ``0821``
+   * - Encrypted (:py:class:`SolixBLE.protocols.EncryptedOuter`)
+     - ``4001``
+     - AES-128-GCM under a static key
+     - AES-128-GCM
+     - ``4827`` status ``00``, or the first session push the client can decrypt
+
+Both outers run the same opening (``x001``, ``x003`` for the device's
+capabilities, ``x029`` for its serial and MAC), then an ECDH key exchange on
+P-256 with a fresh key for every negotiation. The key is the first 16 bytes
+of the shared secret; the IV is the next 16 (GCM uses 12 of them).
+
+Which outer is tried first comes from the best hint available, strongest
+first:
+
+#. The device itself: a device that drops the link before answering the plain
+   ``0001`` refuses it, and :py:meth:`connect() <SolixBLE.SolixBLEDevice.connect>`
+   reopens once with the encrypted outer in the same call. A device that
+   answered before dropping did not refuse, and the encrypted outer is never
+   stepped down to plain.
+#. The advertisement's capability byte, passed as
+   ``DeviceClass(ble_device, advertisement=advertisement_data)``: bit ``0x04``
+   opens encrypted, the byte without it opens plain.
+#. The outer that last authorized on this device instance.
+#. The model's default (encrypted for the Prime devices, plain otherwise).
+
+.. note::
+   :collapsible: closed
+
+   The outer belongs to the device's firmware, not its model: the same model
+   can accept the plain negotiation on one firmware and refuse it on the
+   next, so a device that updates is picked up at the next reconnect.
+   :py:attr:`announcement <SolixBLE.SolixBLEDevice.announcement>` holds what
+   the device declared in the latest negotiation (MTU, capability and auth
+   methods, serial, MAC and the client registration status).
+
+.. note::
+
+   The Prime chargers expect the region and owner (``420a``) once a client is
+   authorized. The owner sent is this client's identifier; the region is the
+   one set with :py:func:`set_region() <SolixBLE.set_region>`, else the host
+   locale's, else ``GB``.
