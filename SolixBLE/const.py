@@ -13,6 +13,18 @@ UUID_COMMAND = "8c850002-0302-41c5-b46e-cf057c562025"
 #: GATT Service UUID for identifying Solix/Prime devices (Tested on C300X, C1000, and Prime 160w Charger).
 UUID_IDENTIFIER = "0000ff09-0000-1000-8000-00805f9b34fb"
 
+#: GATT Service UUID of devices on the legacy transport (e.g the 767 / F2000).
+LEGACY_SERVICE = "00001780-0000-1000-8000-00805f9b34fb"
+
+#: GATT Characteristic UUID for legacy transport telemetry. Is subscribable.
+UUID_TELEMETRY_LEGACY = "00008888-0000-1000-8000-00805f9b34fb"
+
+#: GATT Characteristic UUID for sending legacy transport commands.
+UUID_COMMAND_LEGACY = "00007777-0000-1000-8000-00805f9b34fb"
+
+#: GATT Service UUIDs that identify an Anker device on either transport.
+UUID_IDENTIFIERS = (UUID_IDENTIFIER, LEGACY_SERVICE)
+
 #: Time to wait before re-connecting on an unexpected disconnect.
 RECONNECT_DELAY = 3
 

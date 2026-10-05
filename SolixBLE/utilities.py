@@ -13,7 +13,7 @@ from typing import Callable
 import tzlocal
 from bleak import BleakScanner, BLEDevice
 
-from .const import UUID_IDENTIFIER
+from .const import UUID_IDENTIFIERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +39,10 @@ async def discover_devices(
         _LOGGER.debug(
             f"Found generic BT device '{device}' with advertising data: '{advertising_data}'"
         )
-        if UUID_IDENTIFIER in advertising_data.service_uuids and device not in devices:
+        if (
+            any(uuid in advertising_data.service_uuids for uuid in UUID_IDENTIFIERS)
+            and device not in devices
+        ):
             _LOGGER.debug(
                 f"Found Anker device '{device}' with advertising data: '{advertising_data}'"
             )
