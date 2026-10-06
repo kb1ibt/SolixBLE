@@ -72,7 +72,7 @@ CONNECT_USAGE = (
 )
 #: Message type of the client registration ``--no-register`` withholds.
 REGISTRATION_MSGTYPE = 0x027
-#: The outer protocols ``connect --outer`` opens with, whatever the advert says.
+#: The outer protocols ``connect --outer`` opens with, ignoring the advert.
 OUTERS: dict[str, type[Outer]] = {"plain": PlainOuter, "encrypted": EncryptedOuter}
 #: Loggers of the BLE stack, set by ``--bleak-log-level`` apart from the library's.
 BLEAK_LOGGERS = ("bleak", "bleak_retry_connector")
@@ -99,7 +99,8 @@ HELP_LINES = (
     "                                     defaults to the factory's choice;",
     "                                     --no-advert connects as HaSolixBLE does",
     "                                     (no capability hint), --outer opens with",
-    "                                     that outer whatever the advert says,",
+    "                                     that outer, ignoring the advert's",
+    "                                     capability byte;",
     "                                     --no-register withholds 4027 and carries",
     "                                     on as if authorized",
     "devices | use <n> | disconnect [n]   the open links and the current one",
