@@ -51,7 +51,7 @@ from .const import (
     RECONNECT_ATTEMPTS_MAX,
     RECONNECT_DELAY,
 )
-from .transport import LegacyTransport, NegotiatingTransport
+from .transport import LegacyTransport, NegotiatingTransport, Transport2215
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,8 +71,9 @@ class SolixBLEDevice:
     _TELEMETRY_COMMANDS: tuple[str, ...] = ("c402", "4300", "c405")
 
     #: The BLE transport this device uses. Subclasses on the legacy transport
-    #: (GATT service ``1780``) set :class:`~SolixBLE.transport.LegacyTransport`.
-    _TRANSPORT: type[NegotiatingTransport | LegacyTransport] = NegotiatingTransport
+    #: (GATT service ``1780``) set :class:`~SolixBLE.transport.LegacyTransport`,
+    #: those on service ``2215`` :class:`~SolixBLE.transport.Transport2215`.
+    _TRANSPORT: type[NegotiatingTransport | Transport2215 | LegacyTransport] = NegotiatingTransport
 
     #: The maximum packet size an Anker device is able to send
     _mtu = 253
