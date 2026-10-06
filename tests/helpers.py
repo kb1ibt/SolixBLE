@@ -12,6 +12,7 @@ from typing import Any, Self, Union
 from unittest import mock
 
 from bleak import BleakClient
+from bleak.exc import BleakError
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from cryptography.hazmat.primitives.asymmetric.ec import (
@@ -61,6 +62,12 @@ class RequestResponse:
     """
     Drop the connection instead of responding, as a device does when it
     refuses a request.
+    """
+
+    refuse_during_write: bool = field(default=False)
+    """
+    Drop the connection before the refused write returns, so the write
+    raises as bleak's does.
     """
 
 
@@ -213,7 +220,12 @@ class MockDevice:
             )
         )
 
-    def refuse_after(self, value: bytes | None = None) -> None:
+    def refuse_after(
+        self,
+        value: bytes | None = None,
+        *,
+        during_write: bool = False,
+    ) -> None:
         """
         Expect an ordered request and drop the connection when it is made.
 
@@ -221,6 +233,7 @@ class MockDevice:
         next connection made to the mock device succeeds.
 
         :param value: Expected bytes value or None to accept any.
+        :param during_write: Drop before the write returns, so it raises.
         """
         self._assertions.append(
             RequestResponse(
@@ -228,6 +241,7 @@ class MockDevice:
                 expected=value,
                 response=[],
                 refuse=True,
+                refuse_during_write=during_write,
             ),
         )
 
@@ -317,6 +331,9 @@ class MockDevice:
         if request_response.refuse:
             self.disconnect()
             self._connect_next = True
+            if request_response.refuse_during_write:
+                msg = "disconnected"
+                raise BleakError(msg)
             return
 
         # Wait a little

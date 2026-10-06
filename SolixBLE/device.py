@@ -175,9 +175,20 @@ class SolixBLEDevice:
         self._state_changed_callbacks.remove(function)
 
     async def _initiate_negotiations(self) -> None:
-        """Start a negotiation on the current outer protocol."""
+        """Start a negotiation on the current outer protocol.
+
+        A device that refuses the opening can drop the link before the write
+        returns; that write's error is the refusal, left to the caller to see
+        as a dropped link.
+
+        :raises BleakError: If the write fails while the link is still up.
+        """
         self._session = NegotiatedSession(self._outer_class(), self)
-        await self._session.open()
+        try:
+            await self._session.open()
+        except BleakError:
+            if self.connected:
+                raise
 
     async def connect(self, max_attempts: int = 3, run_callbacks: bool = True) -> bool:
         """Connect to device.

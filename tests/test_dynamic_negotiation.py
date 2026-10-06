@@ -48,6 +48,30 @@ async def test_refused_plain_reopens_encrypted(
 
 
 @pytest.mark.asyncio
+async def test_refusal_during_the_write_reopens_encrypted(
+    fake_time: None,  # noqa: ARG001
+    fast_sleep: None,  # noqa: ARG001
+    fast_timeouts: None,  # noqa: ARG001
+) -> None:
+    """A drop that fails the ``0001`` write itself is a refusal too."""
+    device = PrimeCharger160w(MOCK_BLE_DEVICE)
+    device._outer_class = PlainOuter  # noqa: SLF001
+    async with MockDevice() as mock_bluetooth:
+        mock_bluetooth.refuse_after(during_write=True)
+        for expected, responses in NEGOTIATION_RESPONSES_PRIME.items():
+            mock_bluetooth.expect_ordered(
+                bytes.fromhex(expected),
+                [bytes.fromhex(response) for response in responses],
+            )
+
+        assert await device.connect()
+        mock_bluetooth.check_assertions()
+
+    assert Packet.parse(mock_bluetooth.writes[0]).cmd.hex() == "0001"
+    assert device._outer_class.name == EncryptedOuter.name  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_remembered_plain_corrected_by_refusal(
     fake_time: None,  # noqa: ARG001
     fast_sleep: None,  # noqa: ARG001
