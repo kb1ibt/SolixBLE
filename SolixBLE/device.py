@@ -14,7 +14,6 @@ from datetime import datetime
 from functools import partial
 
 from bleak import BleakClient, BleakError
-from bleak.backends.client import BaseBleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import establish_connection
@@ -117,12 +116,13 @@ class SolixBLEDevice:
         """
 
         _LOGGER.debug(
-            f"Initializing Solix device '{ble_device.name}' with"
+            f"Initializing Solix device '{ble_device.name}' with "
             f"address '{ble_device.address}' and details '{ble_device.details}'"
         )
 
         self._ble_device: BLEDevice = ble_device
         self._client: BleakClient | None = None
+        self._disposed_client: BleakClient | None = None
         self._fragment_buffers: dict[bytes, list[FragmentedPayload]] = {}
         self._data: ParameterDict | None = None
         self._last_data_timestamp: datetime | None = None
@@ -1067,7 +1067,7 @@ class SolixBLEDevice:
         except Exception:
             _LOGGER.exception("Unexpected exception in keep-alive task!")
 
-    def _disconnect_callback(self, client: BaseBleakClient) -> None:
+    def _disconnect_callback(self, client: BleakClient) -> None:
         """Callback executed by bleak when the connection is lost.
 
         This clears the negotiated values which are now invalid
@@ -1079,6 +1079,11 @@ class SolixBLEDevice:
 
         :param client: Bleak client.
         """
+
+        # The client we disconnected on purpose
+        if client is self._disposed_client:
+            _LOGGER.debug(f"Disconnected from '{self.name}'.")
+            return
 
         # Ignore disconnect callbacks from old clients
         if client is not self._client:
@@ -1099,6 +1104,7 @@ class SolixBLEDevice:
         """Dispose of current bleak client."""
         client = self._client
         self._client = None
+        self._disposed_client = client
         try:
             await client.disconnect()
         except Exception:
