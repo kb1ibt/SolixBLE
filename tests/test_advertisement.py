@@ -42,10 +42,35 @@ from tests.helpers import make_advertisement
             (2, "007f1d23a370", 0x00, "b118", "DK96", 0x04),
             id="a1763",
         ),
+        # SolixBLE #63, the MAC redacted there
         pytest.param(
             "01aabbccddeeff02b106373434",
             (1, "aabbccddeeff", 0x02, "b106", "744", None),
             id="f3800_shaped",
+        ),
+        # SolixBLE #2
+        pytest.param(
+            "01f49d8a8107d002b11254323704",
+            (1, "f49d8a8107d0", 0x02, "b112", "T27", 0x04),
+            id="f3800_plus",
+        ),
+        # SolixBLE #1: a capability byte that is present and clear
+        pytest.param(
+            "01f49d8aa1b3aa02b00647513800",
+            (1, "f49d8aa1b3aa", 0x02, "b006", "GQ8", 0x00),
+            id="solarbank2_e1600_pro",
+        ),
+        # HaSolixBLE #17
+        pytest.param(
+            "01f49d8a8a022602b103445a4204",
+            (1, "f49d8a8a0226", 0x02, "b103", "DZB", 0x04),
+            id="c800",
+        ),
+        # HaSolixBLE #48: the A1340 sends three NULs as its sku
+        pytest.param(
+            "01e8eeccc7011802010100000004",
+            (1, "e8eeccc70118", 0x02, "0101", "", 0x04),
+            id="a1340",
         ),
     ],
 )
@@ -72,10 +97,12 @@ def test_parse_record(
         pytest.param("01f49d8a", id="too_short"),
         pytest.param("03aa12deadb34500b402514a4204", id="unknown_version"),
         pytest.param("01aa12deadb34500b402ffffff04", id="sku_not_ascii"),
+        # SolixBLE #55: the legacy 767 sends only its MAC, reversed
+        pytest.param("1fa63fcceee8", id="legacy_bare_mac"),
     ],
 )
 def test_parse_malformed(record: str) -> None:
-    """A truncated, unknown-version or non-ascii record decodes to None."""
+    """A truncated, unknown-version, non-ascii or bare-MAC record decodes to None."""
     assert parse_advertisement(bytes.fromhex(record)) is None
 
 

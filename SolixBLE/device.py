@@ -58,6 +58,9 @@ _LOGGER = logging.getLogger(__name__)
 #: The UUID sent to the device during negotiation
 UUID_STRING = "b2dc0b17-b75d-4abf-ba6e-ec7c997c23e7"
 
+#: Message type handled as telemetry on every model (``0300`` / ``4300``)
+TELEMETRY_MSGTYPE = 0x300
+
 
 class SolixBLEDevice:
     """Solix BLE device object."""
@@ -579,6 +582,13 @@ class SolixBLEDevice:
 
             return None
 
+    def _telemetry_msgtypes(self) -> set[int]:
+        """Return the message types of this model's telemetry commands."""
+        return {
+            PacketCommand.parse(bytes.fromhex(cmd)).msgtype
+            for cmd in self._TELEMETRY_COMMANDS
+        }
+
     async def _process_session(
         self, cmd: bytes, payload: bytes, *, encrypted: bool,
     ) -> None:
@@ -590,8 +600,10 @@ class SolixBLEDevice:
         :param encrypted: Whether the packet arrived encrypted.
         """
 
-        # Telemetry messages
-        if cmd.hex() == "0300" or cmd.hex() in self._TELEMETRY_COMMANDS:
+        # Telemetry messages, matched on the message type whatever the
+        # fragment and encryption flags (a clear 8405 is a c405)
+        msgtype = PacketCommand.parse(cmd).msgtype
+        if msgtype == TELEMETRY_MSGTYPE or msgtype in self._telemetry_msgtypes():
             _LOGGER.debug(
                 "Received encrypted telemetry message!"
                 if encrypted

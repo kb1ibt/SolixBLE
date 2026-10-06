@@ -10,12 +10,14 @@ import pytest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
-from SolixBLE import C300, PrimeCharger160w
+from SolixBLE import C300, PrimeCharger160w, Solarbank2
 from SolixBLE.constructs import Packet
 from tests.const import (
     MOCK_BLE_DEVICE,
     NEGOTIATION_RESPONSES_PRIME,
     NEGOTIATION_RESPONSES_SOLIX,
+    SOLARBANK2_CLEAR_TELEMETRY,
+    SOLARBANK2_SERIAL,
 )
 from tests.helpers import MockDevice
 
@@ -104,6 +106,7 @@ async def test_unhandled_channel_is_logged_not_routed(
         pytest.param("03000f", "0300", False, id="composer_00_session_reply"),
         pytest.param("030111", "4300", True, id="app_channel"),
         pytest.param("03010f", "c402", True, id="single_fragment"),
+        pytest.param("03010f", "8402", False, id="clear_fragment"),
     ],
 )
 async def test_flag_decides_decryption_and_reassembly(  # noqa: PLR0913, PLR0917
@@ -186,3 +189,27 @@ async def test_two_futures_one_decrypt(
         await mock_bluetooth.send_data([frame])
 
     assert [future.result() for future in futures] == [plaintext, plaintext]
+
+
+@pytest.mark.asyncio
+async def test_clear_fragmented_telemetry_is_telemetry(
+    fake_time: None,  # noqa: ARG001
+    fast_sleep: None,  # noqa: ARG001
+    fast_timeouts: None,  # noqa: ARG001
+) -> None:
+    """A clear ``8405`` in three fragments reassembles and reads as ``c405`` would."""
+    device = Solarbank2(MOCK_BLE_DEVICE)
+
+    async with MockDevice() as mock_bluetooth:
+        for expected, responses in NEGOTIATION_RESPONSES_SOLIX.items():
+            mock_bluetooth.expect_ordered(
+                bytes.fromhex(expected),
+                [bytes.fromhex(response) for response in responses],
+            )
+        assert await device.connect()
+        await mock_bluetooth.send_data(
+            [bytes.fromhex(frame) for frame in SOLARBANK2_CLEAR_TELEMETRY],
+        )
+
+    assert device._data is not None  # noqa: SLF001
+    assert device._data["a2"].value_legacy[1:].decode() == SOLARBANK2_SERIAL  # noqa: SLF001

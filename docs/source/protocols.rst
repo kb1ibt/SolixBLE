@@ -6,7 +6,7 @@ Protocols
 Transports
 ----------
 
-Anker devices use one of two BLE transports. A device class names its
+Anker devices use one of three BLE transports. A device class names its
 transport in the ``_TRANSPORT`` attribute, which selects the GATT
 characteristics the library subscribes to and writes to.
 
@@ -20,6 +20,11 @@ characteristics the library subscribes to and writes to.
      - advertised service ``ff09``
      - command ``8c850002-...``, telemetry ``8c850003-...``; a session is
        negotiated before commands
+   * - 2215 (:py:class:`SolixBLE.transport.Transport2215`), e.g the A1340
+       Prime power bank
+     - advertised service ``2215``
+     - command ``22150002-4002-...``, telemetry ``22150003-4002-...``; the
+       negotiating transport's frames and negotiation
    * - Legacy (:py:class:`SolixBLE.transport.LegacyTransport`), e.g the 767 /
        F2000 on older firmware
      - advertised service ``1780``
@@ -118,28 +123,35 @@ before connecting:
      - the last byte (``capability``), or None if absent; bit ``0x04`` = the
        device accepts the encrypted negotiation
    * - :py:func:`device_class_from_advertisement() <SolixBLE.device_class_from_advertisement>`
-     - the model class from ``product_type``, else from a Prime-style local name
-       ``<part number>_<last four MAC digits>``, else :py:class:`SolixBLE.Generic`;
-       None for a device on the legacy transport
+     - the model class from ``product_type``, else from the advertised name (the
+       model's own, or a Prime-style ``<part number>_<last four MAC digits>``),
+       else :py:class:`SolixBLE.Generic`; None for a device on a transport no
+       class speaks yet (legacy ``1780``, ``2215``)
 
 .. note::
 
     :py:func:`device_class_from_advertisement() <SolixBLE.device_class_from_advertisement>`
-    does not check that the device is an Anker device. Match the advertised
-    service first, as below.
+    does not check that the device is an Anker device. Match the record or
+    the advertised service first, as below; a passive scan can carry the
+    record without the services. Some firmware advertises the device serial as
+    its name, and the legacy transport sends only the MAC (reversed) under
+    ``0xffff``, which decodes to None.
 
 .. code-block:: python
 
     from bleak import BleakScanner
 
     from SolixBLE import capability_from_advertisement, device_class_from_advertisement
-    from SolixBLE.const import UUID_IDENTIFIER
+    from SolixBLE.advertisement import ANKER_COMPANY_ID
+    from SolixBLE.const import UUID_IDENTIFIERS
 
     def detected(device, advertisement_data):
-        if UUID_IDENTIFIER not in advertisement_data.service_uuids:
+        if ANKER_COMPANY_ID not in advertisement_data.manufacturer_data and not any(
+            uuid in advertisement_data.service_uuids for uuid in UUID_IDENTIFIERS
+        ):
             return
         device_class = device_class_from_advertisement(advertisement_data, device.name)
         capability = capability_from_advertisement(advertisement_data)
-        print(device.address, device_class.__name__, capability)
+        print(device.address, device_class and device_class.__name__, capability)
 
     scanner = BleakScanner(detection_callback=detected)

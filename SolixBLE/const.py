@@ -22,8 +22,17 @@ UUID_TELEMETRY_LEGACY = "00008888-0000-1000-8000-00805f9b34fb"
 #: GATT Characteristic UUID for sending legacy transport commands.
 UUID_COMMAND_LEGACY = "00007777-0000-1000-8000-00805f9b34fb"
 
-#: GATT Service UUIDs that identify an Anker device on either transport.
-UUID_IDENTIFIERS = (UUID_IDENTIFIER, LEGACY_SERVICE)
+#: GATT Service UUID of devices on the 2215 transport (e.g the A1340 Prime power bank).
+SERVICE_2215 = "00002215-0000-1000-8000-00805f9b34fb"
+
+#: GATT Characteristic UUID for 2215 transport telemetry. Is subscribable.
+UUID_TELEMETRY_2215 = "22150003-4002-81c5-b46e-cf057c562025"
+
+#: GATT Characteristic UUID for sending 2215 transport commands / negotiating.
+UUID_COMMAND_2215 = "22150002-4002-81c5-b46e-cf057c562025"
+
+#: GATT Service UUIDs that identify an Anker device on any transport.
+UUID_IDENTIFIERS = (UUID_IDENTIFIER, LEGACY_SERVICE, SERVICE_2215)
 
 #: Time to wait before re-connecting on an unexpected disconnect.
 RECONNECT_DELAY = 3

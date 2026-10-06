@@ -3,20 +3,22 @@
 .. moduleauthor:: kb1ibt
 """
 
-from unittest import mock
-
 import pytest
 from bleak.backends.device import BLEDevice
 
 from SolixBLE import C300, SolixBLEDevice, discover_devices
+from SolixBLE.advertisement import ANKER_COMPANY_ID
 from SolixBLE.const import (
     LEGACY_SERVICE,
+    SERVICE_2215,
     UUID_COMMAND,
+    UUID_COMMAND_2215,
     UUID_IDENTIFIER,
     UUID_TELEMETRY,
+    UUID_TELEMETRY_2215,
     UUID_TELEMETRY_LEGACY,
 )
-from SolixBLE.transport import LegacyTransport
+from SolixBLE.transport import LegacyTransport, Transport2215
 from tests.const import MOCK_BLE_DEVICE, NEGOTIATION_RESPONSES_SOLIX
 from tests.helpers import MockDevice, make_advertisement, scanner_reporting
 
@@ -62,21 +64,56 @@ async def test_negotiating_transport_uuids(
 
 
 @pytest.mark.asyncio
-async def test_discover_matches_either_service() -> None:
-    """Discovery keeps devices advertising either transport's service."""
+async def test_transport_2215_uuids(
+    fake_time: None,  # noqa: ARG001
+    fast_sleep: None,  # noqa: ARG001
+    fast_timeouts: None,  # noqa: ARG001
+) -> None:
+    """A device on the 2215 transport negotiates on its own characteristics."""
+
+    class Device2215(C300):
+        _TRANSPORT = Transport2215
+
+    device = Device2215(MOCK_BLE_DEVICE)
+    async with MockDevice() as mock_bluetooth:
+        for expected, responses in NEGOTIATION_RESPONSES_SOLIX.items():
+            mock_bluetooth.expect_ordered(
+                bytes.fromhex(expected),
+                [bytes.fromhex(response) for response in responses],
+            )
+        assert await device.connect()
+        assert mock_bluetooth.notify_uuids == [UUID_TELEMETRY_2215]
+        assert set(mock_bluetooth.write_uuids) == {UUID_COMMAND_2215}
+        await device.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_discover_matches_the_record_or_a_service() -> None:
+    """Discovery keeps devices with the Anker record or any transport's service."""
     negotiating = BLEDevice("AA:BB:CC:DD:EE:01", "negotiating", None)
     legacy = BLEDevice("AA:BB:CC:DD:EE:02", "legacy", None)
-    other = BLEDevice("AA:BB:CC:DD:EE:03", "other", None)
+    transport_2215 = BLEDevice("AA:BB:CC:DD:EE:03", "2215", None)
+    passive = BLEDevice("AA:BB:CC:DD:EE:04", "passive scan", None)
+    other = BLEDevice("AA:BB:CC:DD:EE:05", "other", None)
     results = [
         (negotiating, make_advertisement(service_uuids=[UUID_IDENTIFIER])),
         (legacy, make_advertisement(service_uuids=[LEGACY_SERVICE])),
+        (transport_2215, make_advertisement(service_uuids=[SERVICE_2215])),
+        # HaSolixBLE #17: a passive scan carries the record but no services
+        (
+            passive,
+            make_advertisement(
+                manufacturer_data={
+                    ANKER_COMPANY_ID: bytes.fromhex("01f49d8a8a022602b103445a4204"),
+                },
+            ),
+        ),
         (
             other,
             make_advertisement(service_uuids=["0000180f-0000-1000-8000-00805f9b34fb"]),
         ),
     ]
 
-    with mock.patch("SolixBLE.utilities.BleakScanner", scanner_reporting(results)):
-        devices = await discover_devices(timeout=0)
+    devices = await discover_devices(scanner=scanner_reporting(results), timeout=0)
 
-    assert devices == [negotiating, legacy]
+    assert devices == [negotiating, legacy, transport_2215, passive]
