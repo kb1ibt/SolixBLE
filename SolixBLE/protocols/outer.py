@@ -9,13 +9,19 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from construct import (  # type: ignore[import-untyped]  # construct ships no type stubs
+    Container,
+    Int8ul,
+    Int16ul,
+)
+
 from SolixBLE.const import NEGOTIATION_AAD, NEGOTIATION_KEY, NEGOTIATION_NONCE
 from SolixBLE.utilities import cbc_decrypt, cbc_encrypt, gcm_decrypt, gcm_encrypt
 
-from .base import Announcement, Keys, Outer, override
+from .base import CLIENT_MTU, Keys, Outer, override
 
 #: Static key material of the encrypted outer before a path installs keys.
-STATIC_KEYS = Keys(bytes.fromhex(NEGOTIATION_KEY), bytes.fromhex(NEGOTIATION_NONCE))
+STATIC_KEYS = Keys.parse(bytes.fromhex(NEGOTIATION_KEY + NEGOTIATION_NONCE))
 AAD = bytes.fromhex(NEGOTIATION_AAD)
 
 
@@ -28,17 +34,17 @@ class PlainOuter(Outer):
     authorizes_at_key_exchange: ClassVar[bool] = True
 
     @override
-    def x005_tags(self, announcement: Announcement) -> tuple[bytes, bytes | None]:  # noqa: ARG002  # the protocol's signature
+    def x005_tags(self, announcement: Container) -> tuple[bytes, bytes | None]:  # noqa: ARG002  # the protocol's signature
         """Return the app's plain-outer ``0005`` tags: its MTU ceiling, no ``a6``.
 
         The app sends these whatever the device declared.
 
         :param announcement: What the device declared so far.
         """
-        return bytes.fromhex("00f0"), None
+        return Int16ul.build(CLIENT_MTU), None
 
     @override
-    def encrypt(self, payload: bytes, keys: Keys | None) -> bytes:
+    def encrypt(self, payload: bytes, keys: Container | None) -> bytes:
         """Leave the payload clear before keys, AES-CBC under them.
 
         :param payload: Plain-text bytes.
@@ -47,7 +53,7 @@ class PlainOuter(Outer):
         return payload if keys is None else cbc_encrypt(keys.key, keys.iv, payload)
 
     @override
-    def decrypt(self, payload: bytes, keys: Keys | None) -> bytes:
+    def decrypt(self, payload: bytes, keys: Container | None) -> bytes:
         """Return the payload as is before keys, AES-CBC decrypted under them.
 
         :param payload: Cipher-text bytes.
@@ -68,35 +74,35 @@ class EncryptedOuter(Outer):
     authorizes_at_key_exchange: ClassVar[bool] = False
 
     @override
-    def x005_tags(self, announcement: Announcement) -> tuple[bytes, bytes | None]:
+    def x005_tags(self, announcement: Container) -> tuple[bytes, bytes | None]:
         """Return the app's encrypted-outer ``4005`` tags: device MTU and auth mode.
 
         :param announcement: What the device declared in ``x803``.
         """
-        mtu = (announcement.mtu or 0xF000).to_bytes(2, "little")
+        mtu = Int16ul.build(announcement.mtu or CLIENT_MTU)
         auth = (
-            bytes([announcement.auth_method])
+            Int8ul.build(announcement.auth_method)
             if announcement.auth_method is not None
             else None
         )
         return mtu, auth
 
     @override
-    def encrypt(self, payload: bytes, keys: Keys | None) -> bytes:
+    def encrypt(self, payload: bytes, keys: Container | None) -> bytes:
         """AES-GCM seal under the path's keys, or the static key before them.
 
         :param payload: Plain-text bytes.
         :param keys: Keys a path installed, or None before the key exchange.
         """
         k = keys or STATIC_KEYS
-        return gcm_encrypt(k.key, k.iv[:12], AAD, payload)
+        return gcm_encrypt(k.key, k.nonce, AAD, payload)
 
     @override
-    def decrypt(self, payload: bytes, keys: Keys | None) -> bytes:
+    def decrypt(self, payload: bytes, keys: Container | None) -> bytes:
         """AES-GCM open under the path's keys, or the static key before them.
 
         :param payload: Cipher-text bytes.
         :param keys: Keys a path installed, or None before the key exchange.
         """
         k = keys or STATIC_KEYS
-        return gcm_decrypt(k.key, k.iv[:12], AAD, payload)
+        return gcm_decrypt(k.key, k.nonce, AAD, payload)

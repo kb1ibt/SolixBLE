@@ -15,6 +15,9 @@ from typing import Callable
 
 import tzlocal
 from bleak import BleakScanner, BLEDevice
+from construct import (  # type: ignore[import-untyped]  # construct ships no type stubs
+    Int32sl,
+)
 from Crypto.Cipher import AES
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ec import (
@@ -163,7 +166,8 @@ def _offset_seconds_west() -> bytes:
     """
     gmtoff = time.localtime().tm_gmtoff
     seconds_west = -gmtoff if gmtoff is not None else 0
-    return seconds_west.to_bytes(4, byteorder="little", signed=True)
+    offset: bytes = Int32sl.build(seconds_west)
+    return offset
 
 def generate_ecdh_key() -> EllipticCurvePrivateKey:
     """Create a fresh P-256 private key for one ECDH negotiation.

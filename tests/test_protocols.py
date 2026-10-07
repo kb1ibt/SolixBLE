@@ -6,7 +6,7 @@ firmware v0.3.3.0; the ``x829`` carries a synthetic serial.
 .. moduleauthor:: kb1ibt
 """
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
@@ -15,7 +15,6 @@ from SolixBLE.constructs import ParameterDict
 from SolixBLE.protocols import (
     EcdhPath,
     EncryptedOuter,
-    Keys,
     NegotiatedSession,
     Outer,
     Path,
@@ -23,6 +22,11 @@ from SolixBLE.protocols import (
 )
 from SolixBLE.protocols.base import NegotiatedSessionLike, override
 from tests.helpers import RECORDING_CLIENT_ID, RecordingLink
+
+if TYPE_CHECKING:
+    from construct import (  # type: ignore[import-untyped]  # construct ships no type stubs
+        Container,
+    )
 
 NEGOTIATION = bytes.fromhex("030001")
 GRANT = bytes.fromhex("030101")
@@ -200,7 +204,7 @@ async def test_status_byte_reaches_the_path() -> None:
         name: ClassVar[str] = "probe"
 
         def __init__(self) -> None:
-            self.keys: Keys | None = None
+            self.keys: Container | None = None
             self.authorized = False
 
         @override

@@ -420,16 +420,18 @@ def install_session_keys(device: SolixBLEDevice, secret: bytes) -> None:
 
     The device keeps its current session (or starts one on its class's outer
     protocol) and its path holds ``secret[:16]`` as the key and
-    ``secret[16:32]`` as the IV, as after a real key exchange.
+    ``secret[16:32]`` as the IV, as after a real key exchange. An empty
+    secret leaves the keys as they are.
 
     :param device: Device under test.
-    :param secret: The 32-byte ECDH shared secret.
+    :param secret: The 32-byte ECDH shared secret, or empty.
     """
     if device._session is None:
         device._session = NegotiatedSession(device._outer_class(), device)
     if device._session.path is None:
         device._session.path = EcdhPath()
-    device._session.path.keys = Keys(secret[:16], secret[16:32])
+    if secret:
+        device._session.path.keys = Keys.parse(secret)
 
 
 #: Client UUID and token reported by RecordingLink.

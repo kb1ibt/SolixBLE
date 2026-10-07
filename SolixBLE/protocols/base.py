@@ -4,9 +4,15 @@
 """
 
 import sys
-from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol
 
+from construct import (  # type: ignore[import-untyped]  # construct ships no type stubs
+    Bytes,
+    Computed,
+    Container,
+    GreedyBytes,
+    Struct,
+)
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from SolixBLE.constructs import ParameterDict
@@ -17,7 +23,8 @@ else:
     from typing_extensions import override
 
 __all__ = [
-    "Announcement",
+    "CLIENT_ENCRYPT",
+    "CLIENT_MTU",
     "Keys",
     "Link",
     "NegotiatedSessionLike",
@@ -26,34 +33,56 @@ __all__ = [
     "Session",
     "UnsupportedNegotiation",
     "client_parameters",
+    "new_announcement",
     "override",
 ]
 
+#: The client's ``a3`` in ``x003`` and ``x005``; the device logs it and ignores it.
+CLIENT_ENCRYPT = 0x20
+#: The client's MTU ceiling in ``x003`` and the plain ``0005`` (61 440 = no limit).
+CLIENT_MTU = 0xF000
 
-@dataclass(frozen=True)
-class Keys:
-    """Session key material: 16-byte key, 16-byte IV (GCM uses ``iv[:12]``)."""
+Keys = Struct(
+    "key" / Bytes(16),
+    "iv" / GreedyBytes,
+    "nonce" / Computed(lambda this: this.iv[:12]),
+)
+"""
+Session key material: a 16-byte key, then the IV.
 
-    key: bytes
-    iv: bytes
+ECDH parses the 32-byte shared secret (a 16-byte IV); the static key is the key
+followed by its 12-byte nonce. GCM uses ``nonce``, CBC the whole ``iv``.
+
+Usage:
+    .. code-block:: python
+       :linenos:
+
+        keys = Keys.parse(shared_secret)
+        print(f"key: {keys.key.hex()}, nonce: {keys.nonce.hex()}")
+
+"""
 
 
-@dataclass
-class Announcement:
-    """What the device declared during negotiation."""
+def new_announcement() -> Container:
+    """
+    Return an empty record of what a device declares during negotiation.
 
-    mtu: int | None = None
-    #: x803 a1: base capability bits (0x02 = AES).
-    base_method: int | None = None
-    #: x803 a3: advanced capability bits (0x04/0x40 = ECDH).
-    encrypt_method: int | None = None
-    auth_method: int | None = None
-    serial: bytes | None = None
-    mac: bytes | None = None
-    #: x827 status (00 accepted, 09 confirmation required).
-    registration_status: int | None = None
-    #: Seconds, from 09's a1 (u16 LE).
-    confirmation_window: int | None = None
+    Fields, all None until the device sends them: ``mtu``, ``base_method``
+    (``x803 a1``, base capability bits), ``encrypt_method`` (``x803 a3``,
+    advanced capability bits), ``auth_method``, ``serial``, ``mac``,
+    ``registration_status`` (``x827`` status) and ``confirmation_window``
+    (seconds, from ``09``'s ``a1``).
+    """
+    return Container(
+        mtu=None,
+        base_method=None,
+        encrypt_method=None,
+        auth_method=None,
+        serial=None,
+        mac=None,
+        registration_status=None,
+        confirmation_window=None,
+    )
 
 
 class Link(Protocol):
@@ -98,20 +127,20 @@ class Outer(Protocol):
     sends_client_id: ClassVar[bool]
     authorizes_at_key_exchange: ClassVar[bool]
 
-    def x005_tags(self, announcement: Announcement) -> tuple[bytes, bytes | None]:
+    def x005_tags(self, announcement: Container) -> tuple[bytes, bytes | None]:
         """Return ``x005``'s ``a4`` and ``a6`` (or None) as the app sends them here.
 
         :param announcement: What the device declared so far.
         """
 
-    def encrypt(self, payload: bytes, keys: Keys | None) -> bytes:
+    def encrypt(self, payload: bytes, keys: Container | None) -> bytes:
         """Seal a payload under the installed keys, or the pre-key wrapper.
 
         :param payload: Plain-text bytes.
         :param keys: Keys a path installed, or None before the key exchange.
         """
 
-    def decrypt(self, payload: bytes, keys: Keys | None) -> bytes:
+    def decrypt(self, payload: bytes, keys: Container | None) -> bytes:
         """Open a payload under the installed keys, or the pre-key wrapper.
 
         :param payload: Cipher-text bytes.
@@ -123,7 +152,7 @@ class NegotiatedSessionLike(Protocol):
     """What a path may use of the session that runs it."""
 
     link: Link
-    announcement: Announcement
+    announcement: Container
 
     @property
     def outer(self) -> Outer:
@@ -148,7 +177,7 @@ class Path(Protocol):
     """Key establishment and authorization after the shared opening."""
 
     name: ClassVar[str]
-    keys: Keys | None
+    keys: Container | None
     authorized: bool
 
     async def on_stage(
@@ -170,7 +199,7 @@ class Path(Protocol):
 class Session(Protocol):
     """What the device needs from its negotiation."""
 
-    announcement: Announcement
+    announcement: Container
 
     @property
     def authorized(self) -> bool:
@@ -214,7 +243,7 @@ class Session(Protocol):
 class UnsupportedNegotiation(Exception):  # noqa: N818
     """The device announced, or rejected, something no registered path handles."""
 
-    def __init__(self, announcement: Announcement, detail: str = "") -> None:
+    def __init__(self, announcement: Container, detail: str = "") -> None:
         """Name what the device announced.
 
         :param announcement: What the device declared.

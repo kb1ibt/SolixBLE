@@ -11,10 +11,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
+from construct import (  # type: ignore[import-untyped]  # construct ships no type stubs
+    Container,
+    Int8ul,
+    Int16ul,
+)
+
 from SolixBLE.utilities import ecdh_public_bytes, ecdh_shared_secret
 
 from .base import (
-    Announcement,
+    CLIENT_ENCRYPT,
     Keys,
     NegotiatedSessionLike,
     Path,
@@ -48,7 +54,7 @@ class EcdhPath(Path):
 
     def __init__(self) -> None:
         """Start with no keys and no authorization."""
-        self.keys: Keys | None = None
+        self.keys: Container | None = None
         self.authorized = False
         self._key: EllipticCurvePrivateKey | None = None
 
@@ -83,8 +89,9 @@ class EcdhPath(Path):
                 if self._key is None:
                     msg = "x821 before the client key was generated"
                     raise RuntimeError(msg)
-                secret = ecdh_shared_secret(self._key, parameters["a1"].value_legacy)
-                self.keys = Keys(secret[:16], secret[16:32])
+                self.keys = Keys.parse(
+                    ecdh_shared_secret(self._key, parameters["a1"].value_legacy),
+                )
                 if session.outer.authorizes_at_key_exchange:
                     self.authorized = True
                 # The outer adds a2 (the app sends it on the plain outer only).
@@ -111,7 +118,7 @@ class EcdhPath(Path):
 
     def _record_identity(
         self,
-        announcement: Announcement,
+        announcement: Container,
         parameters: ParameterDict,
     ) -> None:
         """Record the serial (``a4``) and MAC (``a5``) the device sent in ``x829``."""
@@ -122,7 +129,7 @@ class EcdhPath(Path):
 
     def _register(
         self,
-        announcement: Announcement,
+        announcement: Container,
         status: int,
         parameters: ParameterDict,
     ) -> None:
@@ -136,9 +143,8 @@ class EcdhPath(Path):
             self.authorized = True
             return
         if status == STATUS_CONFIRM and "a1" in parameters:
-            announcement.confirmation_window = int.from_bytes(
+            announcement.confirmation_window = Int16ul.parse(
                 parameters["a1"].value_legacy,
-                "little",
             )
         _LOGGER.info("Client registration status %02x; not authorized", status)
 
@@ -154,9 +160,9 @@ class EcdhPath(Path):
         a4, a6 = session.outer.x005_tags(session.announcement)
         tags = client_parameters(
             a1=lambda self: self._timestamp(),
-            a3=b"\x20",
+            a3=Int8ul.build(CLIENT_ENCRYPT),
             a4=a4,
-            a5=bytes([ECDH_METHOD[session.outer.name]]),
+            a5=Int8ul.build(ECDH_METHOD[session.outer.name]),
         )
         if a6 is not None:
             tags["a6"] = {"value": a6}

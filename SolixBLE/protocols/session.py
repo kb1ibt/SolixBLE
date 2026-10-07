@@ -10,17 +10,24 @@ from __future__ import annotations
 
 import logging
 
+from construct import (  # type: ignore[import-untyped]  # construct ships no type stubs
+    Int8ul,
+    Int16ul,
+)
+
 from SolixBLE.const import NEGOTIATION_PATTERN
 from SolixBLE.constructs import PacketCommand, ParameterDict, Parameters
 
 from .base import (
-    Announcement,
+    CLIENT_ENCRYPT,
+    CLIENT_MTU,
     Link,
     NegotiatedSessionLike,
     Outer,
     Path,
     Session,
     client_parameters,
+    new_announcement,
     override,
 )
 from .ecdh import EcdhPath
@@ -42,7 +49,7 @@ class NegotiatedSession(NegotiatedSessionLike, Session):
         """
         self._outer = outer
         self.link = link
-        self.announcement = Announcement()
+        self.announcement = new_announcement()
         self.path: Path | None = None
         self._replied = False
         self._pushed = False
@@ -152,8 +159,8 @@ class NegotiatedSession(NegotiatedSessionLike, Session):
                     0x003,
                     client_parameters(
                         a1=lambda self: self._timestamp(),
-                        a3=b"\x20",
-                        a4=bytes.fromhex("00f0"),
+                        a3=Int8ul.build(CLIENT_ENCRYPT),
+                        a4=Int16ul.build(CLIENT_MTU),
                     ),
                     client_id=True,
                 )
@@ -176,12 +183,12 @@ class NegotiatedSession(NegotiatedSessionLike, Session):
     def _record_capability(self, parameters: ParameterDict) -> None:
         """Record the capability bits, MTU and auth method of ``x803``."""
         self.announcement.base_method = (
-            parameters["a1"].value_legacy[0] if "a1" in parameters else None
+            Int8ul.parse(parameters["a1"].value_legacy) if "a1" in parameters else None
         )
-        self.announcement.mtu = int.from_bytes(parameters["a2"].value_legacy, "little")
-        self.announcement.encrypt_method = parameters["a3"].value_legacy[0]
+        self.announcement.mtu = Int16ul.parse(parameters["a2"].value_legacy)
+        self.announcement.encrypt_method = Int8ul.parse(parameters["a3"].value_legacy)
         self.announcement.auth_method = (
-            parameters["a5"].value_legacy[0] if "a5" in parameters else None
+            Int8ul.parse(parameters["a5"].value_legacy) if "a5" in parameters else None
         )
 
     def _choose_path(self) -> Path:

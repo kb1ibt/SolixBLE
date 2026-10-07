@@ -18,6 +18,9 @@ from bleak.backends.client import BaseBleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import establish_connection
+from construct import (  # type: ignore[import-untyped]  # construct ships no type stubs
+    Container,
+)
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from SolixBLE.advertisement import (
@@ -36,7 +39,6 @@ from SolixBLE.constructs import (
     Parameters,
 )
 from SolixBLE.protocols import (
-    Announcement,
     EncryptedOuter,
     NegotiatedSession,
     Outer,
@@ -484,7 +486,7 @@ class SolixBLEDevice:
         )
 
     @property
-    def announcement(self) -> Announcement | None:
+    def announcement(self) -> Container | None:
         """What the device declared in its latest negotiation.
 
         .. note::
